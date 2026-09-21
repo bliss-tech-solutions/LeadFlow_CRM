@@ -1,4 +1,5 @@
 import { Schema, model, Types, Document } from "mongoose";
+
 export interface IAudit extends Document {
   actor?: Types.ObjectId;
   action: string;
@@ -9,6 +10,7 @@ export interface IAudit extends Document {
   ip?: string;
   createdAt: Date;
 }
+
 const schema = new Schema<IAudit>(
   {
     actor: { type: Schema.Types.ObjectId, ref: "User" },
@@ -21,4 +23,6 @@ const schema = new Schema<IAudit>(
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );
+
+
 export const Audit = model<IAudit>("Audit", schema);

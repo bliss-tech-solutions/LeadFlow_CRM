@@ -1,10 +1,20 @@
 "use client";
 
-import { Bell, Search, CheckCheck, Trash2, Volume2, VolumeX } from "lucide-react";
+import {
+  Bell,
+  Search,
+  CheckCheck,
+  Trash2,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { socket } from "../lib/socket";
-import { isNotificationSoundEnabled, unlockNotificationSound } from "../lib/notificationSound";
+import {
+  isNotificationSoundEnabled,
+  unlockNotificationSound,
+} from "../lib/notificationSound";
 
 type NotificationItem = {
   _id: string;
@@ -97,7 +107,9 @@ export default function Topbar({
   return (
     <header className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          {title}
+        </h1>
         {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
       </div>
 
@@ -114,8 +126,16 @@ export default function Topbar({
 
         <button
           onClick={enableSound}
-          title={soundEnabled ? "Notification sound enabled" : "Enable notification sound"}
-          aria-label={soundEnabled ? "Notification sound enabled" : "Enable notification sound"}
+          title={
+            soundEnabled
+              ? "Notification sound enabled"
+              : "Enable notification sound"
+          }
+          aria-label={
+            soundEnabled
+              ? "Notification sound enabled"
+              : "Enable notification sound"
+          }
           className={`grid h-10 w-10 place-items-center rounded-xl border shadow-sm ${
             soundEnabled
               ? "border-emerald-200 bg-emerald-50 text-emerald-600"
@@ -142,7 +162,9 @@ export default function Topbar({
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                 <div>
                   <b className="block text-sm">Notifications</b>
-                  <span className="text-xs text-slate-500">{unread} unread</span>
+                  <span className="text-xs text-slate-500">
+                    {unread} unread
+                  </span>
                 </div>
                 <div className="flex items-center gap-1">
                   <button
@@ -177,8 +199,12 @@ export default function Topbar({
                         }`}
                       />
                       <div className="min-w-0 flex-1">
-                        <b className="block text-xs text-slate-900">{item.title}</b>
-                        <span className="mt-0.5 block text-xs text-slate-600">{item.message}</span>
+                        <b className="block text-xs text-slate-900">
+                          {item.title}
+                        </b>
+                        <span className="mt-0.5 block text-xs text-slate-600">
+                          {item.message}
+                        </span>
                         <small className="mt-1 block text-[10px] text-slate-400">
                           {new Date(item.createdAt).toLocaleString()}
                         </small>
@@ -195,7 +221,9 @@ export default function Topbar({
                     </div>
                   ))
                 ) : (
-                  <div className="p-8 text-center text-xs text-slate-500">No notifications.</div>
+                  <div className="p-8 text-center text-xs text-slate-500">
+                    No notifications.
+                  </div>
                 )}
               </div>
             </div>

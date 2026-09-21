@@ -4,7 +4,6 @@ import { auth } from "../middleware/auth";
 
 const r = Router();
 
-
 /**
  * GET /api/notifications
  * Return the current user's latest notifications.
@@ -22,7 +21,6 @@ r.get("/", auth, async (req, res) => {
   res.json({ notifications, unreadCount });
 });
 
-
 /**
  * PATCH /api/notifications/read-all
  * Mark all current-user notifications as read.
@@ -35,7 +33,6 @@ r.patch("/read-all", auth, async (req, res) => {
 
   res.json({ success: true });
 });
-
 
 /**
  * PATCH /api/notifications/:id/read
@@ -55,7 +52,6 @@ r.patch("/:id/read", auth, async (req, res) => {
   res.json({ notification });
 });
 
-
 /**
  * DELETE /api/notifications/clear-read
  * Delete all read notifications for the current user.
@@ -68,7 +64,6 @@ r.delete("/clear-read", auth, async (req, res) => {
 
   res.json({ success: true });
 });
-
 
 /**
  * DELETE /api/notifications/:id

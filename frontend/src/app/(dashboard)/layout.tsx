@@ -50,9 +50,7 @@ export default function DashboardLayout({
           lg:px-9
         "
       >
-        <div className="mx-auto w-full max-w-[1800px]">
-          {children}
-        </div>
+        <div className="mx-auto w-full max-w-[1800px]">{children}</div>
       </main>
 
       <RealtimeToast />

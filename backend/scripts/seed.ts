@@ -37,11 +37,45 @@ async function main() {
     reraNumber: "PR/GJ/DEMO/0001",
     penthouse: true,
     products: [
-      { type: "3BHK", details: { unitCount: "80", areaSqFt: "1850", priceFrom: "8500000", priceTo: "11000000", bathrooms: "3", facing: "East", floorRange: "1-14" } },
-      { type: "4BHK", details: { unitCount: "24", areaSqFt: "2400", priceFrom: "12000000", priceTo: "15500000", bathrooms: "4", facing: "North", floorRange: "5-14" } },
+      {
+        type: "3BHK",
+        details: {
+          unitCount: "80",
+          areaSqFt: "1850",
+          priceFrom: "8500000",
+          priceTo: "11000000",
+          bathrooms: "3",
+          facing: "East",
+          floorRange: "1-14",
+        },
+      },
+      {
+        type: "4BHK",
+        details: {
+          unitCount: "24",
+          areaSqFt: "2400",
+          priceFrom: "12000000",
+          priceTo: "15500000",
+          bathrooms: "4",
+          facing: "North",
+          floorRange: "5-14",
+        },
+      },
     ],
-    ongoing: { details: { location: "SG Highway, Ahmedabad", projectStatus: "Under Construction" } },
-    metaSources: [{ label: "Demo Meta source", pageId: "TEST_PAGE", adId: "TEST_AD", formId: "TEST_FORM" }],
+    ongoing: {
+      details: {
+        location: "SG Highway, Ahmedabad",
+        projectStatus: "Under Construction",
+      },
+    },
+    metaSources: [
+      {
+        label: "Demo Meta source",
+        pageId: "TEST_PAGE",
+        adId: "TEST_AD",
+        formId: "TEST_FORM",
+      },
+    ],
     documents: [
       {
         name: "Zion Project Brochure (Demo)",
@@ -95,7 +129,12 @@ async function main() {
       assignmentSource: "AUTO",
       score: 82,
       businessProject: project._id,
-      meta: { pageId: "TEST_PAGE", adId: "TEST_AD", formId: "TEST_FORM", businessId: project.id },
+      meta: {
+        pageId: "TEST_PAGE",
+        adId: "TEST_AD",
+        formId: "TEST_FORM",
+        businessId: project.id,
+      },
     },
     {
       name: "Neha Shah",

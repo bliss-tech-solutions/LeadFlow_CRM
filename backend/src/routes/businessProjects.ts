@@ -49,7 +49,6 @@ function getObjectUrl(key: string) {
     .join("/")}`;
 }
 
-
 /**
  * GET /api/business-projects
  * Admin sees every project; other authenticated users see only projects linked to their assigned leads.
@@ -75,14 +74,15 @@ r.get("/", auth, async (req, res) => {
   res.json({ projects });
 });
 
-
 /**
  * GET /api/business-projects/:id
  * Return a project only when the user is an admin or has an assigned lead for that project.
  */
 r.get("/:id", auth, async (req, res) => {
   if (!(await canViewProject(req, req.params.id))) {
-    return res.status(403).json({ message: "You do not have access to this project" });
+    return res
+      .status(403)
+      .json({ message: "You do not have access to this project" });
   }
 
   const project = await BusinessProject.findById(req.params.id)
@@ -97,7 +97,6 @@ r.get("/:id", auth, async (req, res) => {
 
   res.json({ project });
 });
-
 
 /**
  * POST /api/business-projects
@@ -115,7 +114,9 @@ r.post("/", auth, roles("ADMIN"), async (req, res) => {
   }
 
   if (!Array.isArray(body.products) || !body.products.length) {
-    return res.status(400).json({ message: "At least one product type is required" });
+    return res
+      .status(400)
+      .json({ message: "At least one product type is required" });
   }
 
   if (!body.metaSetupSkipped) {
@@ -166,7 +167,6 @@ r.post("/", auth, roles("ADMIN"), async (req, res) => {
   res.status(201).json({ project });
 });
 
-
 /**
  * PATCH /api/business-projects/:id
  * Admin updates project details, Meta mappings and project settings.
@@ -206,14 +206,15 @@ r.patch("/:id", auth, roles("ADMIN"), async (req, res) => {
   res.json({ project });
 });
 
-
 /**
  * POST /api/business-projects/uploads/presign
  * Admin requests a short-lived S3 upload URL before a project exists.
  */
 r.post("/uploads/presign", auth, roles("ADMIN"), async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
-  const contentType = String(req.body?.contentType ?? "application/octet-stream");
+  const contentType = String(
+    req.body?.contentType ?? "application/octet-stream",
+  );
   const size = Number(req.body?.size ?? 0);
 
   if (!name) {
@@ -221,7 +222,9 @@ r.post("/uploads/presign", auth, roles("ADMIN"), async (req, res) => {
   }
 
   if (!size || size <= 0 || size > MAX_DOCUMENT_SIZE) {
-    return res.status(400).json({ message: "Document must be between 1 byte and 25 MB" });
+    return res
+      .status(400)
+      .json({ message: "Document must be between 1 byte and 25 MB" });
   }
 
   const safeName = name.replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -234,7 +237,6 @@ r.post("/uploads/presign", auth, roles("ADMIN"), async (req, res) => {
     objectUrl: getObjectUrl(key),
   });
 });
-
 
 /**
  * POST /api/business-projects/:id/documents
@@ -291,7 +293,6 @@ r.post("/:id/documents", auth, roles("ADMIN"), async (req, res) => {
   res.status(201).json({ project });
 });
 
-
 /**
  * POST /api/business-projects/:id/documents/presign
  * Create a short-lived S3 upload URL for an existing project document.
@@ -304,7 +305,9 @@ r.post("/:id/documents/presign", auth, roles("ADMIN"), async (req, res) => {
   }
 
   const name = String(req.body?.name ?? "").trim();
-  const contentType = String(req.body?.contentType ?? "application/octet-stream");
+  const contentType = String(
+    req.body?.contentType ?? "application/octet-stream",
+  );
   const size = Number(req.body?.size ?? 0);
 
   if (!name) {
@@ -312,7 +315,9 @@ r.post("/:id/documents/presign", auth, roles("ADMIN"), async (req, res) => {
   }
 
   if (!size || size <= 0 || size > MAX_DOCUMENT_SIZE) {
-    return res.status(400).json({ message: "Document must be between 1 byte and 25 MB" });
+    return res
+      .status(400)
+      .json({ message: "Document must be between 1 byte and 25 MB" });
   }
 
   const safeName = name.replace(/[^a-zA-Z0-9._-]/g, "-");
@@ -326,17 +331,20 @@ r.post("/:id/documents/presign", auth, roles("ADMIN"), async (req, res) => {
   });
 });
 
-
 /**
  * GET /api/business-projects/:id/documents/:documentId/url
  * Return a short-lived S3 download URL for an authorized project document.
  */
 r.get("/:id/documents/:documentId/url", auth, async (req, res) => {
   if (!(await canViewProject(req, req.params.id))) {
-    return res.status(403).json({ message: "You do not have access to this project document" });
+    return res
+      .status(403)
+      .json({ message: "You do not have access to this project document" });
   }
 
-  const project = await BusinessProject.findById(req.params.id).select("documents");
+  const project = await BusinessProject.findById(req.params.id).select(
+    "documents",
+  );
 
   if (!project) {
     return res.status(404).json({ message: "Business project not found" });
@@ -358,55 +366,63 @@ r.get("/:id/documents/:documentId/url", auth, async (req, res) => {
   res.json({ url });
 });
 
-
 /**
  * DELETE /api/business-projects/:id/documents/:documentId
  * Admin deletes the document from S3 and removes its project metadata.
  */
-r.delete("/:id/documents/:documentId", auth, roles("ADMIN"), async (req, res) => {
-  const project = await BusinessProject.findById(req.params.id);
+r.delete(
+  "/:id/documents/:documentId",
+  auth,
+  roles("ADMIN"),
+  async (req, res) => {
+    const project = await BusinessProject.findById(req.params.id);
 
-  if (!project) {
-    return res.status(404).json({ message: "Business project not found" });
-  }
+    if (!project) {
+      return res.status(404).json({ message: "Business project not found" });
+    }
 
-  const document: any = project.documents.find(
-    (item: any) => String(item._id) === req.params.documentId,
-  );
+    const document: any = project.documents.find(
+      (item: any) => String(item._id) === req.params.documentId,
+    );
 
-  if (!document) {
-    return res.status(404).json({ message: "Document not found" });
-  }
+    if (!document) {
+      return res.status(404).json({ message: "Document not found" });
+    }
 
-  if (document.storageKey && !document.isDemo) {
-    await deleteDocumentObject(document.storageKey);
-  }
+    if (document.storageKey && !document.isDemo) {
+      await deleteDocumentObject(document.storageKey);
+    }
 
-  project.documents = project.documents.filter(
-    (item: any) => String(item._id) !== req.params.documentId,
-  ) as any;
-  project.updatedBy = req.user!.id as any;
-  await project.save();
+    project.documents = project.documents.filter(
+      (item: any) => String(item._id) !== req.params.documentId,
+    ) as any;
+    project.updatedBy = req.user!.id as any;
+    await project.save();
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "PROJECT_DOCUMENT_DELETED",
-    entity: "BusinessProject",
-    entityId: project.id,
-    before: { documentId: req.params.documentId, documentName: document.name },
-    ip: req.ip,
-  });
+    await logAudit({
+      actor: req.user!.id,
+      action: "PROJECT_DOCUMENT_DELETED",
+      entity: "BusinessProject",
+      entityId: project.id,
+      before: {
+        documentId: req.params.documentId,
+        documentName: document.name,
+      },
+      ip: req.ip,
+    });
 
-  res.json({ success: true, project });
-});
-
+    res.json({ success: true, project });
+  },
+);
 
 /**
  * PATCH /api/business-projects/:id/assign
  * Admin assigns all currently released leads for a project to one salesperson.
  */
 r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
-  const project = await BusinessProject.findById(req.params.id).select("_id name");
+  const project = await BusinessProject.findById(req.params.id).select(
+    "_id name",
+  );
   const user = await User.findOne({
     _id: req.body?.userId,
     role: "SALES",
@@ -414,7 +430,9 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   });
 
   if (!project || !user) {
-    return res.status(404).json({ message: "Project or active salesperson not found" });
+    return res
+      .status(404)
+      .json({ message: "Project or active salesperson not found" });
   }
 
   const leads = await Lead.find({
@@ -449,11 +467,10 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   if (leads.length) {
     const recipients = await User.find({
       isActive: true,
-      $or: [
-        { role: "ADMIN" },
-        { _id: user._id },
-      ],
-    }).select("_id").lean();
+      $or: [{ role: "ADMIN" }, { _id: user._id }],
+    })
+      .select("_id")
+      .lean();
 
     await Notification.insertMany(
       recipients.map((recipient) => ({

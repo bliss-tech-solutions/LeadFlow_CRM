@@ -1,6 +1,10 @@
 import { Lead } from "../models/Lead";
 import { BusinessProject } from "../models/BusinessProject";
-import { getDeliverySchedule, isWithinHoldWindow, chooseRandomSalesperson } from "./leadDelivery.service";
+import {
+  getDeliverySchedule,
+  isWithinHoldWindow,
+  chooseRandomSalesperson,
+} from "./leadDelivery.service";
 import { User } from "../models/User";
 import { Notification } from "../models/Notification";
 import { env } from "../config/env";
@@ -10,7 +14,6 @@ type MetaField = {
   name: string;
   values: string[];
 };
-
 
 /**
  * Safely extracts the Meta webhook value object from different payload formats.
@@ -22,8 +25,7 @@ function extractWebhookValue(payload: any) {
 
   // Standard Meta webhook:
   // { entry: [{ changes: [{ value: {...} }] }] }
-  const entryValue =
-    payload?.entry?.[0]?.changes?.[0]?.value;
+  const entryValue = payload?.entry?.[0]?.changes?.[0]?.value;
 
   if (entryValue && typeof entryValue === "object") {
     return entryValue;
@@ -44,8 +46,7 @@ function extractWebhookValue(payload: any) {
   }
 
   // Sometimes changes can be supplied directly.
-  const changeValue =
-    payload?.changes?.[0]?.value;
+  const changeValue = payload?.changes?.[0]?.value;
 
   if (changeValue && typeof changeValue === "object") {
     return changeValue;
@@ -54,7 +55,6 @@ function extractWebhookValue(payload: any) {
   // Already a Meta value object.
   return payload;
 }
-
 
 /**
  * Extracts leadgen_id from all supported Meta webhook/test payload shapes.
@@ -100,14 +100,10 @@ function extractLeadgenId(payload: any): string | null {
   return null;
 }
 
-
 /**
  * Extracts field_data from Meta lead details or webhook payload.
  */
-function extractFieldData(
-  value: any,
-  metaLead: any = null,
-): MetaField[] {
+function extractFieldData(value: any, metaLead: any = null): MetaField[] {
   if (Array.isArray(metaLead?.field_data)) {
     return metaLead.field_data;
   }
@@ -122,7 +118,6 @@ function extractFieldData(
 
   return [];
 }
-
 
 /**
  * Converts Meta field_data into a simple key/value map.
@@ -142,7 +137,6 @@ function fieldMap(fields: MetaField[]) {
 
   return map;
 }
-
 
 /**
  * GET Meta lead details using the leadgen_id from the webhook.
@@ -172,81 +166,51 @@ export async function fetchMetaLeadDetails(
       access_token: env.META_ACCESS_TOKEN,
     });
 
-    url =
-      `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${encodeURIComponent(
-        leadgenId,
-      )}?${params.toString()}`;
+    url = `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${encodeURIComponent(
+      leadgenId,
+    )}?${params.toString()}`;
   }
 
-  console.log(
-    `[meta] fetching lead details for leadgen_id=${leadgenId}`,
-  );
+  console.log(`[meta] fetching lead details for leadgen_id=${leadgenId}`);
 
   const response = await fetch(url);
 
   if (!response.ok) {
     const text = await response.text();
 
-    throw new Error(
-      `Meta lead retrieval failed: ${response.status} ${text}`,
-    );
+    throw new Error(`Meta lead retrieval failed: ${response.status} ${text}`);
   }
 
   return response.json();
 }
 
-
 /**
  * Normalize the Meta webhook event plus optional Graph API lead details.
  */
-export function normalizeMetaPayload(
-  payload: any,
-  metaLead: any = null,
-) {
+export function normalizeMetaPayload(payload: any, metaLead: any = null) {
   const value = extractWebhookValue(payload);
 
-  const fields = extractFieldData(
-    value,
-    metaLead,
-  );
+  const fields = extractFieldData(value, metaLead);
 
   const map = fieldMap(fields);
 
-  const leadgenId =
-    extractLeadgenId(payload) ??
-    metaLead?.id ??
-    null;
+  const leadgenId = extractLeadgenId(payload) ?? metaLead?.id ?? null;
 
   const createdTime =
-    metaLead?.created_time ??
-    value?.created_time ??
-    undefined;
+    metaLead?.created_time ?? value?.created_time ?? undefined;
 
   return {
     metaLeadId: leadgenId,
 
-    name:
-      map.full_name ??
-      map.name ??
-      value?.name ??
-      "Meta Lead",
+    name: map.full_name ?? map.name ?? value?.name ?? "Meta Lead",
 
-    email:
-      map.email ??
-      value?.email,
+    email: map.email ?? value?.email,
 
-    phone:
-      map.phone_number ??
-      map.phone ??
-      value?.phone,
+    phone: map.phone_number ?? map.phone ?? value?.phone,
 
-    campaign:
-      value?.campaign_name ??
-      map.campaign_name,
+    campaign: value?.campaign_name ?? map.campaign_name,
 
-    formName:
-      value?.form_name ??
-      map.form_name,
+    formName: value?.form_name ?? map.form_name,
 
     source: "META",
 
@@ -254,34 +218,24 @@ export function normalizeMetaPayload(
       businessId: undefined,
       fieldData: fields,
 
-      rawPayload:
-        metaLead ??
-        payload,
+      rawPayload: metaLead ?? payload,
 
-      pageId:
-        value?.page_id,
+      pageId: value?.page_id,
 
-      adId:
-        value?.ad_id,
+      adId: value?.ad_id,
 
-      adSetId:
-        value?.adgroup_id ??
-        value?.ad_set_id,
+      adSetId: value?.adgroup_id ?? value?.ad_set_id,
 
-      formId:
-        value?.form_id,
+      formId: value?.form_id,
 
       createdTime: createdTime
         ? new Date(
-            typeof createdTime === "number"
-              ? createdTime * 1000
-              : createdTime,
+            typeof createdTime === "number" ? createdTime * 1000 : createdTime,
           )
         : undefined,
     },
   };
 }
-
 
 /**
  * POST /api/meta/webhook processing.
@@ -301,38 +255,25 @@ export async function ingestMetaLead(
 
   const leadgenId = extractLeadgenId(payload);
 
-  console.log(
-    `[meta] extracted leadgen_id=${leadgenId ?? "NOT_FOUND"}`,
-  );
+  console.log(`[meta] extracted leadgen_id=${leadgenId ?? "NOT_FOUND"}`);
 
   let metaLead: any = null;
 
   /**
    * Fetch complete lead information from Meta Graph API.
    */
-  if (
-    leadgenId &&
-    options.fetchDetails !== false
-  ) {
-    metaLead = await fetchMetaLeadDetails(
-      leadgenId,
-    );
+  if (leadgenId && options.fetchDetails !== false) {
+    metaLead = await fetchMetaLeadDetails(leadgenId);
   }
 
-  const data = normalizeMetaPayload(
-    payload,
-    metaLead,
-  );
+  const data = normalizeMetaPayload(payload, metaLead);
 
   /**
    * Final fallback:
    * If Meta returned the lead ID from Graph API,
    * use that ID even when the webhook itself did not expose it.
    */
-  if (
-    !data.metaLeadId &&
-    metaLead?.id
-  ) {
+  if (!data.metaLeadId && metaLead?.id) {
     data.metaLeadId = String(metaLead.id);
   }
 
@@ -342,14 +283,10 @@ export async function ingestMetaLead(
       JSON.stringify(payload, null, 2),
     );
 
-    throw new Error(
-      "Meta webhook did not contain a leadgen_id",
-    );
+    throw new Error("Meta webhook did not contain a leadgen_id");
   }
 
-  console.log(
-    `[meta] processing leadgen_id=${data.metaLeadId}`,
-  );
+  console.log(`[meta] processing leadgen_id=${data.metaLeadId}`);
 
   /**
    * Prevent duplicate Meta leads.
@@ -359,9 +296,7 @@ export async function ingestMetaLead(
   });
 
   if (existing) {
-    console.log(
-      `[meta] duplicate lead ignored: ${data.metaLeadId}`,
-    );
+    console.log(`[meta] duplicate lead ignored: ${data.metaLeadId}`);
 
     return {
       lead: existing,
@@ -414,7 +349,7 @@ export async function ingestMetaLead(
     assignedAt: assignee ? new Date() : undefined,
     assignmentSource: assignee ? "AUTO" : undefined,
     deliveryStatus: shouldHold ? "HELD" : "RELEASED",
-    heldUntil: shouldHold ? (schedule.holdUntil || new Date()) : undefined,
+    heldUntil: shouldHold ? schedule.holdUntil || new Date() : undefined,
     score: 50,
   });
 
@@ -440,8 +375,7 @@ export async function ingestMetaLead(
       actor: assignee.id,
       type: "LEAD_ASSIGNED",
       title: "Lead assigned",
-      description:
-        `Assigned to ${assignee.name}.`,
+      description: `Assigned to ${assignee.name}.`,
     });
   }
 
@@ -452,10 +386,7 @@ export async function ingestMetaLead(
   if (!shouldHold) {
     const recipients = await User.find({
       isActive: true,
-      $or: [
-        { role: "ADMIN" },
-        ...(assignee ? [{ _id: assignee._id }] : []),
-      ],
+      $or: [{ role: "ADMIN" }, ...(assignee ? [{ _id: assignee._id }] : [])],
     }).select("_id");
 
     if (recipients.length) {
@@ -476,7 +407,9 @@ export async function ingestMetaLead(
     if (io) {
       // Only admins receive the global lead stream. Salespeople receive
       // realtime events only through their own user room.
-      console.log(`[realtime] emitting new_lead to admin/user scope ${lead.id}`);
+      console.log(
+        `[realtime] emitting new_lead to admin/user scope ${lead.id}`,
+      );
       io.to("role:ADMIN").emit("new_lead", { lead: lead.toObject() });
     }
 

@@ -1,5 +1,7 @@
 import "dotenv/config";
 import { z } from "zod";
+
+
 const schema = z.object({
   PORT: z.coerce.number().default(4000),
   MONGO_URI: z.string().default("mongodb://127.0.0.1:27017/leadflow_crm"),
@@ -18,4 +20,6 @@ const schema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_S3_PRESIGN_EXPIRES: z.coerce.number().default(900),
 });
+
+
 export const env = schema.parse(process.env);

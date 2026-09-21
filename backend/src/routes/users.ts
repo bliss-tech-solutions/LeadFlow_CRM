@@ -5,7 +5,6 @@ import { auth, roles } from "../middleware/auth";
 
 const r = Router();
 
-
 /**
  * GET /api/users
  * List active users for admin/manager team management.
@@ -17,7 +16,6 @@ r.get("/", auth, roles("ADMIN"), async (_req, res) => {
 
   res.json({ users });
 });
-
 
 /**
  * POST /api/users
@@ -67,7 +65,6 @@ r.post("/", auth, roles("ADMIN"), async (req, res) => {
   });
 });
 
-
 /**
  * PATCH /api/users/:id/capacity
  * Admin changes the automatic daily lead capacity for a salesperson.
@@ -76,7 +73,9 @@ r.patch("/:id/capacity", auth, roles("ADMIN"), async (req, res) => {
   const limit = Number(req.body?.dailyLeadLimit);
 
   if (!Number.isFinite(limit) || limit < 0 || limit > 1000) {
-    return res.status(400).json({ message: "Daily lead limit must be between 0 and 1000" });
+    return res
+      .status(400)
+      .json({ message: "Daily lead limit must be between 0 and 1000" });
   }
 
   const user = await User.findOneAndUpdate(

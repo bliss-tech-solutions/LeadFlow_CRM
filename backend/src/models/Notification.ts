@@ -14,10 +14,25 @@ export interface INotification extends Document {
 
 const schema = new Schema<INotification>(
   {
-    user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-    type: { type: String, default: "SYSTEM", index: true },
-    title: { type: String, required: true },
-    message: { type: String, required: true },
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    type: {
+      type: String,
+      default: "SYSTEM",
+      index: true,
+    },
+    title: {
+      type: String,
+      required: true,
+    },
+    message: {
+      type: String,
+      required: true,
+    },
     entityType: String,
     entityId: String,
     readAt: Date,

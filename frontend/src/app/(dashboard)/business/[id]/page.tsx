@@ -84,7 +84,9 @@ export default function BusinessProjectDetail() {
       });
 
       if (!uploadResponse.ok) {
-        throw new Error("AWS S3 upload failed. Check the S3 bucket CORS configuration.");
+        throw new Error(
+          "AWS S3 upload failed. Check the S3 bucket CORS configuration.",
+        );
       }
 
       await api(`/business-projects/${id}/documents`, {
@@ -110,7 +112,9 @@ export default function BusinessProjectDetail() {
 
   async function openDocument(document: any) {
     try {
-      const data = await api(`/business-projects/${id}/documents/${document._id}/url`);
+      const data = await api(
+        `/business-projects/${id}/documents/${document._id}/url`,
+      );
       window.open(data.url, "_blank", "noopener,noreferrer");
     } catch (requestError: any) {
       setError(requestError?.message || "Unable to open document");
@@ -120,7 +124,11 @@ export default function BusinessProjectDetail() {
   async function deleteDocument(document: any) {
     if (!isAdmin || document.isDemo) return;
 
-    if (!window.confirm(`Delete ${document.name}? This removes the file from AWS S3.`)) {
+    if (
+      !window.confirm(
+        `Delete ${document.name}? This removes the file from AWS S3.`,
+      )
+    ) {
       return;
     }
 
@@ -198,7 +206,9 @@ export default function BusinessProjectDetail() {
                 <Building2 size={20} />
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className="text-lg font-bold text-slate-900">{project.name}</h2>
+                <h2 className="text-lg font-bold text-slate-900">
+                  {project.name}
+                </h2>
                 <p className="mt-1 text-xs text-slate-500">
                   {project.developerGroup || "Developer group not added"}
                 </p>
@@ -213,8 +223,12 @@ export default function BusinessProjectDetail() {
                 ["Meta mappings", project.metaSources?.length || 0],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl bg-slate-50 p-3">
-                  <span className="text-[10px] font-bold uppercase text-slate-400">{label}</span>
-                  <b className="mt-1 block break-words text-xs text-slate-900">{value}</b>
+                  <span className="text-[10px] font-bold uppercase text-slate-400">
+                    {label}
+                  </span>
+                  <b className="mt-1 block break-words text-xs text-slate-900">
+                    {value}
+                  </b>
                 </div>
               ))}
             </div>
@@ -223,20 +237,33 @@ export default function BusinessProjectDetail() {
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div>
               <h2 className="font-semibold text-slate-900">Products</h2>
-              <p className="text-xs text-slate-500">Product-specific inventory and commercial details.</p>
+              <p className="text-xs text-slate-500">
+                Product-specific inventory and commercial details.
+              </p>
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {(project.products || []).map((product: any, index: number) => (
-                <div key={index} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-                  <b className="text-sm text-slate-900">{product.customType || product.type}</b>
+                <div
+                  key={index}
+                  className="rounded-xl border border-slate-100 bg-slate-50 p-4"
+                >
+                  <b className="text-sm text-slate-900">
+                    {product.customType || product.type}
+                  </b>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {Object.entries(product.details || {}).map(([key, value]) => (
-                      <div key={key}>
-                        <span className="text-[10px] font-semibold uppercase text-slate-400">{key}</span>
-                        <p className="break-words text-xs text-slate-700">{String(value) || "—"}</p>
-                      </div>
-                    ))}
+                    {Object.entries(product.details || {}).map(
+                      ([key, value]) => (
+                        <div key={key}>
+                          <span className="text-[10px] font-semibold uppercase text-slate-400">
+                            {key}
+                          </span>
+                          <p className="break-words text-xs text-slate-700">
+                            {String(value) || "—"}
+                          </p>
+                        </div>
+                      ),
+                    )}
                   </div>
                 </div>
               ))}
@@ -246,8 +273,12 @@ export default function BusinessProjectDetail() {
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <h2 className="font-semibold text-slate-900">Project documents</h2>
-                <p className="text-xs text-slate-500">Client-shareable files stored in AWS S3.</p>
+                <h2 className="font-semibold text-slate-900">
+                  Project documents
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Client-shareable files stored in AWS S3.
+                </p>
               </div>
 
               {isAdmin && (
@@ -258,7 +289,9 @@ export default function BusinessProjectDetail() {
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700"
                   >
                     {documentCategories.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
                     ))}
                   </select>
 
@@ -281,36 +314,61 @@ export default function BusinessProjectDetail() {
             </div>
 
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {docs.length ? (
-                docs.map((document: any) => (
-                  <div key={document._id} className="flex items-center gap-3 rounded-xl border border-slate-100 p-3">
-                    <FileText size={17} className="shrink-0 text-indigo-600" />
-                    <button onClick={() => openDocument(document)} className="min-w-0 flex-1 text-left hover:opacity-80">
-                      <b className="block truncate text-xs text-slate-900">{document.name}</b>
-                      <small className="text-[10px] text-slate-500">
-                        {documentCategories.find(([value]) => value === document.category)?.[1] || document.category}
-                        {document.isDemo ? " · Demo" : " · AWS S3"}
-                      </small>
-                    </button>
-                    <ExternalLink size={13} className="shrink-0 text-slate-400" />
-                    {isAdmin && !document.isDemo && (
-                      <button onClick={() => void deleteDocument(document)} title="Delete document" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-rose-500 hover:bg-rose-50">
-                        <Trash2 size={14} />
+              {docs.length
+                ? docs.map((document: any) => (
+                    <div
+                      key={document._id}
+                      className="flex items-center gap-3 rounded-xl border border-slate-100 p-3"
+                    >
+                      <FileText
+                        size={17}
+                        className="shrink-0 text-indigo-600"
+                      />
+                      <button
+                        onClick={() => openDocument(document)}
+                        className="min-w-0 flex-1 text-left hover:opacity-80"
+                      >
+                        <b className="block truncate text-xs text-slate-900">
+                          {document.name}
+                        </b>
+                        <small className="text-[10px] text-slate-500">
+                          {documentCategories.find(
+                            ([value]) => value === document.category,
+                          )?.[1] || document.category}
+                          {document.isDemo ? " · Demo" : " · AWS S3"}
+                        </small>
                       </button>
-                    )}
-                  </div>
-                ))
-              ) : (
-                demoDocuments.map((document) => (
-                  <div key={document.name} className="flex items-center gap-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3">
-                    <FileText size={17} className="text-slate-400" />
-                    <span className="flex-1">
-                      <b className="block text-xs text-slate-700">{document.name}</b>
-                      <small className="text-[10px] text-slate-400">Demo document · upload a real file from Admin</small>
-                    </span>
-                  </div>
-                ))
-              )}
+                      <ExternalLink
+                        size={13}
+                        className="shrink-0 text-slate-400"
+                      />
+                      {isAdmin && !document.isDemo && (
+                        <button
+                          onClick={() => void deleteDocument(document)}
+                          title="Delete document"
+                          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-rose-500 hover:bg-rose-50"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                : demoDocuments.map((document) => (
+                    <div
+                      key={document.name}
+                      className="flex items-center gap-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3"
+                    >
+                      <FileText size={17} className="text-slate-400" />
+                      <span className="flex-1">
+                        <b className="block text-xs text-slate-700">
+                          {document.name}
+                        </b>
+                        <small className="text-[10px] text-slate-400">
+                          Demo document · upload a real file from Admin
+                        </small>
+                      </span>
+                    </div>
+                  ))}
             </div>
           </section>
         </div>
@@ -318,27 +376,42 @@ export default function BusinessProjectDetail() {
         <aside className="space-y-5">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="font-semibold text-slate-900">Meta lead mapping</h2>
-            <p className="mt-1 text-xs text-slate-500">IDs used to connect incoming Meta leads to this project.</p>
+            <p className="mt-1 text-xs text-slate-500">
+              IDs used to connect incoming Meta leads to this project.
+            </p>
             <div className="mt-4 space-y-2">
-              {(project.metaSources || []).length ? project.metaSources.map((source: any, index: number) => (
-                <div key={index} className="rounded-xl bg-slate-50 p-3">
-                  <b className="text-xs text-slate-900">{source.label || `Meta source ${index + 1}`}</b>
-                  {[
-                    ["Page ID", source.pageId],
-                    ["Ad account", source.adAccountId],
-                    ["Campaign", source.campaignId],
-                    ["Ad set", source.adSetId],
-                    ["Ad ID", source.adId],
-                    ["Form ID", source.formId],
-                  ].map(([label, value]) => (
-                    <div key={label} className="mt-2 flex justify-between gap-3 border-b border-slate-200/70 pb-2 last:border-0 last:pb-0">
-                      <span className="text-[10px] text-slate-400">{label}</span>
-                      <strong className="max-w-[180px] break-all text-right text-[10px] text-slate-700">{value || "—"}</strong>
-                    </div>
-                  ))}
+              {(project.metaSources || []).length ? (
+                project.metaSources.map((source: any, index: number) => (
+                  <div key={index} className="rounded-xl bg-slate-50 p-3">
+                    <b className="text-xs text-slate-900">
+                      {source.label || `Meta source ${index + 1}`}
+                    </b>
+                    {[
+                      ["Page ID", source.pageId],
+                      ["Ad account", source.adAccountId],
+                      ["Campaign", source.campaignId],
+                      ["Ad set", source.adSetId],
+                      ["Ad ID", source.adId],
+                      ["Form ID", source.formId],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="mt-2 flex justify-between gap-3 border-b border-slate-200/70 pb-2 last:border-0 last:pb-0"
+                      >
+                        <span className="text-[10px] text-slate-400">
+                          {label}
+                        </span>
+                        <strong className="max-w-[180px] break-all text-right text-[10px] text-slate-700">
+                          {value || "—"}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-xl bg-slate-50 p-4 text-xs text-slate-500">
+                  Meta setup was skipped for this project.
                 </div>
-              )) : (
-                <div className="rounded-xl bg-slate-50 p-4 text-xs text-slate-500">Meta setup was skipped for this project.</div>
               )}
             </div>
           </section>
@@ -351,27 +424,62 @@ export default function BusinessProjectDetail() {
             <div className="mt-4 space-y-3 text-xs text-slate-600">
               {project.stage === "UPCOMING" && (
                 <>
-                  <p><b>Product repeat:</b> {project.upcoming?.productRepeat ? "Yes" : "No"}</p>
-                  <p><b>RERA tenure:</b> {project.upcoming?.reraTenureYears || "—"} years</p>
-                  <p><b>Location:</b> {project.upcoming?.location || "—"}</p>
-                  <p><b>Expected launch:</b> {project.upcoming?.details?.expectedLaunchDate || "—"}</p>
+                  <p>
+                    <b>Product repeat:</b>{" "}
+                    {project.upcoming?.productRepeat ? "Yes" : "No"}
+                  </p>
+                  <p>
+                    <b>RERA tenure:</b>{" "}
+                    {project.upcoming?.reraTenureYears || "—"} years
+                  </p>
+                  <p>
+                    <b>Location:</b> {project.upcoming?.location || "—"}
+                  </p>
+                  <p>
+                    <b>Expected launch:</b>{" "}
+                    {project.upcoming?.details?.expectedLaunchDate || "—"}
+                  </p>
                 </>
               )}
               {project.stage === "COMPLETED" && (
                 <>
-                  <p><b>Business type:</b> {project.completed?.businessType || "—"}</p>
-                  <p><b>Completion year:</b> {project.completed?.completionYear || "—"}</p>
-                  <p><b>Area:</b> {project.completed?.area || "—"}</p>
-                  <p><b>Location:</b> {project.completed?.location || "—"}</p>
+                  <p>
+                    <b>Business type:</b>{" "}
+                    {project.completed?.businessType || "—"}
+                  </p>
+                  <p>
+                    <b>Completion year:</b>{" "}
+                    {project.completed?.completionYear || "—"}
+                  </p>
+                  <p>
+                    <b>Area:</b> {project.completed?.area || "—"}
+                  </p>
+                  <p>
+                    <b>Location:</b> {project.completed?.location || "—"}
+                  </p>
                 </>
               )}
               {project.stage === "ONGOING" && (
                 <>
-                  <p><b>Status:</b> {project.ongoing?.details?.projectStatus || "—"}</p>
-                  <p><b>Location:</b> {project.ongoing?.details?.location || "—"}</p>
-                  <p><b>Launch date:</b> {project.ongoing?.details?.launchDate || "—"}</p>
-                  <p><b>Possession date:</b> {project.ongoing?.details?.possessionDate || "—"}</p>
-                  <p><b>Land area:</b> {project.ongoing?.details?.landArea || "—"}</p>
+                  <p>
+                    <b>Status:</b>{" "}
+                    {project.ongoing?.details?.projectStatus || "—"}
+                  </p>
+                  <p>
+                    <b>Location:</b> {project.ongoing?.details?.location || "—"}
+                  </p>
+                  <p>
+                    <b>Launch date:</b>{" "}
+                    {project.ongoing?.details?.launchDate || "—"}
+                  </p>
+                  <p>
+                    <b>Possession date:</b>{" "}
+                    {project.ongoing?.details?.possessionDate || "—"}
+                  </p>
+                  <p>
+                    <b>Land area:</b>{" "}
+                    {project.ongoing?.details?.landArea || "—"}
+                  </p>
                 </>
               )}
             </div>

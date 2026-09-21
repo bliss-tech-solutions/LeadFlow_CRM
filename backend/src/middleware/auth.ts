@@ -1,12 +1,14 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
+
 export type AuthUser = {
   id: string;
   name: string;
   email: string;
   role: "ADMIN" | "MANAGER" | "SALES";
 };
+
 declare global {
   namespace Express {
     interface Request {
@@ -14,6 +16,7 @@ declare global {
     }
   }
 }
+
 export function auth(req: Request, res: Response, next: NextFunction) {
   const h = req.headers.authorization;
   if (!h?.startsWith("Bearer "))
@@ -25,6 +28,7 @@ export function auth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 }
+
 export function roles(...allowed: AuthUser["role"][]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user || !allowed.includes(req.user.role))

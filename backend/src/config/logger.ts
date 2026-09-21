@@ -1,7 +1,6 @@
 import winston from "winston";
 
-const { combine, timestamp, json, errors, colorize, simple } =
-  winston.format;
+const { combine, timestamp, json, errors, colorize, simple } = winston.format;
 
 export const logger = winston.createLogger({
   level: process.env.NODE_ENV === "production" ? "info" : "debug",
@@ -10,11 +9,7 @@ export const logger = winston.createLogger({
     service: "leadflow-crm-api",
   },
 
-  format: combine(
-    timestamp(),
-    errors({ stack: true }),
-    json(),
-  ),
+  format: combine(timestamp(), errors({ stack: true }), json()),
 
   transports: [
     // All logs
@@ -34,11 +29,7 @@ export const logger = winston.createLogger({
       format:
         process.env.NODE_ENV === "production"
           ? combine(timestamp(), json())
-          : combine(
-              colorize(),
-              timestamp(),
-              simple(),
-            ),
+          : combine(colorize(), timestamp(), simple()),
     }),
   ],
 

@@ -47,13 +47,24 @@ export interface ILead extends Document {
 
 const schema = new Schema<ILead>(
   {
-    name: { type: String, required: true },
+    name: {
+      type: String,
+      required: true,
+    },
     email: String,
     phone: String,
-    source: { type: String, default: "MANUAL" },
+    source: {
+      type: String,
+      default: "MANUAL",
+    },
     campaign: String,
     formName: String,
-    metaLeadId: { type: String, index: true, sparse: true, unique: true },
+    metaLeadId: {
+      type: String,
+      index: true,
+      sparse: true,
+      unique: true,
+    },
 
     meta: {
       fieldData: {
@@ -65,7 +76,10 @@ const schema = new Schema<ILead>(
         ],
         default: [],
       },
-      rawPayload: { type: Schema.Types.Mixed, default: null },
+      rawPayload: {
+        type: Schema.Types.Mixed,
+        default: null,
+      },
       businessId: String,
       pageId: String,
       adAccountId: String,
@@ -95,8 +109,17 @@ const schema = new Schema<ILead>(
     assignedTo: { type: Schema.Types.ObjectId, ref: "User", index: true },
     assignedAt: Date,
     assignmentSource: { type: String, enum: ["AUTO", "MANUAL"] },
-    businessProject: { type: Schema.Types.ObjectId, ref: "BusinessProject", index: true },
-    deliveryStatus: { type: String, enum: ["RELEASED", "HELD"], default: "RELEASED", index: true },
+    businessProject: {
+      type: Schema.Types.ObjectId,
+      ref: "BusinessProject",
+      index: true,
+    },
+    deliveryStatus: {
+      type: String,
+      enum: ["RELEASED", "HELD"],
+      default: "RELEASED",
+      index: true,
+    },
     heldUntil: Date,
     score: { type: Number, default: 0 },
     notes: String,

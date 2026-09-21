@@ -21,7 +21,6 @@ const VALID_STATUSES = [
   "NOT_INTERESTED",
 ];
 
-
 /**
  * Build the lead visibility filter: ADMIN sees all released leads, others see only assigned leads.
  */
@@ -37,7 +36,6 @@ function visibleLeadFilter(req: any) {
   return filter;
 }
 
-
 /**
  * Check whether the current user may work with a specific lead.
  */
@@ -52,7 +50,6 @@ async function canAccessLead(req: any, leadId: string) {
     }),
   );
 }
-
 
 /**
  * GET /api/leads/stats
@@ -84,7 +81,6 @@ r.get("/stats", auth, async (req, res) => {
     held,
   });
 });
-
 
 /**
  * GET /api/leads
@@ -139,7 +135,6 @@ r.get("/", auth, async (req, res) => {
   });
 });
 
-
 /**
  * GET /api/leads/followups/all
  * Return pending follow-ups scoped to the authenticated user's assigned work.
@@ -158,14 +153,15 @@ r.get("/followups/all", auth, async (req, res) => {
   });
 });
 
-
 /**
  * GET /api/leads/:id
  * Return one accessible lead plus activity, calls, follow-ups and project documents.
  */
 r.get("/:id", auth, async (req, res) => {
   if (!(await canAccessLead(req, req.params.id))) {
-    return res.status(403).json({ message: "You do not have access to this lead" });
+    return res
+      .status(403)
+      .json({ message: "You do not have access to this lead" });
   }
 
   const lead = await Lead.findById(req.params.id)
@@ -194,14 +190,15 @@ r.get("/:id", auth, async (req, res) => {
   res.json({ lead, activities, calls, followups });
 });
 
-
 /**
  * PATCH /api/leads/:id/status
  * Change the status of an accessible lead and write the audit trail.
  */
 r.patch("/:id/status", auth, async (req, res) => {
   if (!(await canAccessLead(req, req.params.id))) {
-    return res.status(403).json({ message: "You do not have access to this lead" });
+    return res
+      .status(403)
+      .json({ message: "You do not have access to this lead" });
   }
 
   if (!VALID_STATUSES.includes(req.body?.status)) {
@@ -247,7 +244,6 @@ r.patch("/:id/status", auth, async (req, res) => {
   res.json({ lead });
 });
 
-
 /**
  * PATCH /api/leads/:id/assign
  * Admin manually assigns a released lead to a salesperson, bypassing automatic daily capacity.
@@ -261,11 +257,18 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   });
 
   if (!lead || !user) {
-    return res.status(404).json({ message: "Lead or active salesperson not found" });
+    return res
+      .status(404)
+      .json({ message: "Lead or active salesperson not found" });
   }
 
   if (lead.deliveryStatus !== "RELEASED") {
-    return res.status(400).json({ message: "Held leads cannot be manually assigned until they are released" });
+    return res
+      .status(400)
+      .json({
+        message:
+          "Held leads cannot be manually assigned until they are released",
+      });
   }
 
   const before = lead.assignedTo;
@@ -302,9 +305,7 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
       entityId: lead.id,
     },
     ...(
-      await User.find({ role: "ADMIN", isActive: true })
-        .select("_id")
-        .lean()
+      await User.find({ role: "ADMIN", isActive: true }).select("_id").lean()
     ).map((admin) => ({
       user: admin._id,
       type: "LEAD_ASSIGNED",
@@ -330,14 +331,15 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   res.json({ lead });
 });
 
-
 /**
  * POST /api/leads/:id/calls
  * Record a call only against a lead visible to the current user.
  */
 r.post("/:id/calls", auth, async (req, res) => {
   if (!(await canAccessLead(req, req.params.id))) {
-    return res.status(403).json({ message: "You do not have access to this lead" });
+    return res
+      .status(403)
+      .json({ message: "You do not have access to this lead" });
   }
 
   const call = await Call.create({
@@ -360,7 +362,8 @@ r.post("/:id/calls", auth, async (req, res) => {
   await logActivity({
     lead: req.params.id,
     actor: req.user!.id,
-    type: req.body.result === "NOT_PICKED" ? "CALL_NOT_PICKED" : "CALL_COMPLETED",
+    type:
+      req.body.result === "NOT_PICKED" ? "CALL_NOT_PICKED" : "CALL_COMPLETED",
     title: `Call: ${req.body.result}`,
     description: req.body.notes,
   });
@@ -368,29 +371,35 @@ r.post("/:id/calls", auth, async (req, res) => {
   res.status(201).json({ call });
 });
 
-
 /**
  * POST /api/leads/:id/followups
  * Schedule a future follow-up for an accessible lead.
  */
 r.post("/:id/followups", auth, async (req, res) => {
   if (!(await canAccessLead(req, req.params.id))) {
-    return res.status(403).json({ message: "You do not have access to this lead" });
+    return res
+      .status(403)
+      .json({ message: "You do not have access to this lead" });
   }
 
   const scheduledAt = new Date(req.body.scheduledAt);
 
   if (Number.isNaN(scheduledAt.getTime())) {
-    return res.status(400).json({ message: "A valid follow-up date and time are required" });
+    return res
+      .status(400)
+      .json({ message: "A valid follow-up date and time are required" });
   }
 
   if (scheduledAt.getTime() <= Date.now()) {
-    return res.status(400).json({ message: "Follow-up must be scheduled in the future" });
+    return res
+      .status(400)
+      .json({ message: "Follow-up must be scheduled in the future" });
   }
 
-  const followupUserId = req.user!.role === "ADMIN"
-    ? req.body.userId ?? req.user!.id
-    : req.user!.id;
+  const followupUserId =
+    req.user!.role === "ADMIN"
+      ? (req.body.userId ?? req.user!.id)
+      : req.user!.id;
 
   const assignedUser = await User.findOne({
     _id: followupUserId,
@@ -424,11 +433,10 @@ r.post("/:id/followups", auth, async (req, res) => {
 
   const recipients = await User.find({
     isActive: true,
-    $or: [
-      { role: "ADMIN" },
-      { _id: assignedUser._id },
-    ],
-  }).select("_id").lean();
+    $or: [{ role: "ADMIN" }, { _id: assignedUser._id }],
+  })
+    .select("_id")
+    .lean();
 
   await Notification.insertMany(
     recipients.map((user) => ({

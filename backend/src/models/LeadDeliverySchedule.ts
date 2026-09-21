@@ -14,12 +14,24 @@ export interface ILeadDeliverySchedule extends Document {
 
 const schema = new Schema<ILeadDeliverySchedule>(
   {
-    enabled: { type: Boolean, default: false },
+    enabled: {
+      type: Boolean,
+      default: false,
+    },
     holdFrom: Date,
     holdUntil: Date,
-    holdStart: { type: String, default: "22:00" },
-    holdEnd: { type: String, default: "10:00" },
-    timezone: { type: String, default: "Asia/Kolkata" },
+    holdStart: {
+      type: String,
+      default: "22:00",
+    },
+    holdEnd: {
+      type: String,
+      default: "10:00",
+    },
+    timezone: {
+      type: String,
+      default: "Asia/Kolkata",
+    },
     updatedBy: String,
   },
   { timestamps: true },

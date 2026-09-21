@@ -1,9 +1,13 @@
 import { Router } from "express";
 import { auth, roles } from "../middleware/auth";
-import { getDeliverySchedule, getSalesCapacity, isWithinHoldWindow, releaseHeldLeads } from "../services/leadDelivery.service";
+import {
+  getDeliverySchedule,
+  getSalesCapacity,
+  isWithinHoldWindow,
+  releaseHeldLeads,
+} from "../services/leadDelivery.service";
 
 const r = Router();
-
 
 /**
  * GET /api/lead-delivery/schedule
@@ -14,25 +18,35 @@ r.get("/schedule", auth, roles("ADMIN"), async (_req, res) => {
   res.json({ schedule, holding: isWithinHoldWindow(schedule) });
 });
 
-
 /**
  * PUT /api/lead-delivery/schedule
  * Save an exact date/time lead-hold window.
  */
 r.put("/schedule", auth, roles("ADMIN"), async (req, res) => {
-  const { enabled, holdFrom, holdUntil, timezone = "Asia/Kolkata" } = req.body ?? {};
+  const {
+    enabled,
+    holdFrom,
+    holdUntil,
+    timezone = "Asia/Kolkata",
+  } = req.body ?? {};
 
   if (Boolean(enabled)) {
     if (!holdFrom || Number.isNaN(new Date(holdFrom).getTime())) {
-      return res.status(400).json({ message: "A valid hold start date and time is required" });
+      return res
+        .status(400)
+        .json({ message: "A valid hold start date and time is required" });
     }
 
     if (!holdUntil || Number.isNaN(new Date(holdUntil).getTime())) {
-      return res.status(400).json({ message: "A valid hold end date and time is required" });
+      return res
+        .status(400)
+        .json({ message: "A valid hold end date and time is required" });
     }
 
     if (new Date(holdUntil).getTime() <= new Date(holdFrom).getTime()) {
-      return res.status(400).json({ message: "Hold end must be after hold start" });
+      return res
+        .status(400)
+        .json({ message: "Hold end must be after hold start" });
     }
   }
 
@@ -54,7 +68,6 @@ r.put("/schedule", auth, roles("ADMIN"), async (req, res) => {
   });
 });
 
-
 /**
  * GET /api/lead-delivery/capacity
  * Return today's automatic lead capacity for every active salesperson.
@@ -63,7 +76,6 @@ r.get("/capacity", auth, roles("ADMIN"), async (_req, res) => {
   const capacity = await getSalesCapacity();
   res.json({ capacity });
 });
-
 
 /**
  * POST /api/lead-delivery/release

@@ -73,7 +73,7 @@ export default function Sidebar() {
               href={href}
               title={label}
               className={`
-                group flex min-h-11 shrink-0 items-center gap-3
+                group flex min-h-11 shrink-0 items-center justify-center gap-3
                 rounded-xl px-2 text-sm transition
                 md:justify-start md:px-3
                 ${
@@ -112,7 +112,7 @@ export default function Sidebar() {
       {/* User / Logout */}
       <div
         className="
-          mt-3 flex shrink-0 items-center justify-center gap-2
+          mt-3 flex flex-col-reverse md:flex-row shrink-0 items-center justify-center gap-2
           border-t border-slate-800 pt-3
           md:justify-start md:px-1
         "

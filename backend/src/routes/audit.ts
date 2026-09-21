@@ -4,7 +4,6 @@ import { auth, roles } from "../middleware/auth";
 
 const r = Router();
 
-
 /**
  * GET /api/audit
  * Admin/manager audit trail.

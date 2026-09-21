@@ -1,4 +1,5 @@
 import { Schema, model, Types, Document } from "mongoose";
+
 export interface IFollowUp extends Document {
   lead: Types.ObjectId;
   user: Types.ObjectId;
@@ -9,6 +10,7 @@ export interface IFollowUp extends Document {
   completedAt?: Date;
   createdAt: Date;
 }
+
 const schema = new Schema<IFollowUp>(
   {
     lead: {
@@ -17,9 +19,20 @@ const schema = new Schema<IFollowUp>(
       required: true,
       index: true,
     },
-    user: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    type: { type: String, default: "CALL" },
-    scheduledAt: { type: Date, required: true, index: true },
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    type: {
+      type: String,
+      default: "CALL",
+    },
+    scheduledAt: {
+      type: Date,
+      required: true,
+      index: true,
+    },
     notes: String,
     status: {
       type: String,

@@ -108,7 +108,9 @@ export default function Dashboard() {
         body: JSON.stringify({
           enabled: form.enabled,
           holdFrom: form.enabled ? new Date(form.holdFrom).toISOString() : null,
-          holdUntil: form.enabled ? new Date(form.holdUntil).toISOString() : null,
+          holdUntil: form.enabled
+            ? new Date(form.holdUntil).toISOString()
+            : null,
           timezone: form.timezone,
         }),
       });
@@ -199,12 +201,17 @@ export default function Dashboard() {
           ["Won", stats.won || 0, ArrowUpRight],
           ...(isAdmin ? [["Held", heldCount, PauseCircle]] : []),
         ].map(([label, value, Icon]: any) => (
-          <div key={label} className="rounded-2xl flex-1 border border-slate-200 bg-white p-4 shadow-sm">
+          <div
+            key={label}
+            className="rounded-2xl flex-1 border border-slate-200 bg-white p-4 shadow-sm"
+          >
             <div className="flex items-center justify-between text-xs text-slate-500">
               <span>{label}</span>
               <Icon size={17} />
             </div>
-            <strong className="mt-2 block text-3xl font-bold text-slate-900">{value}</strong>
+            <strong className="mt-2 block text-3xl font-bold text-slate-900">
+              {value}
+            </strong>
             <span className="mt-1 block text-[11px] text-slate-400">
               {isAdmin ? "Current workspace count" : "Assigned to you"}
             </span>
@@ -225,10 +232,15 @@ export default function Dashboard() {
           </div>
           <div className="mt-5 space-y-4">
             {funnel.map(([name, count]: any) => (
-              <div key={name} className="grid grid-cols-[90px_minmax(0,1fr)_40px] items-center gap-3 text-xs">
+              <div
+                key={name}
+                className="grid grid-cols-[90px_minmax(0,1fr)_40px] items-center gap-3 text-xs"
+              >
                 <span className="text-slate-600">{name}</span>
                 <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                  <div className={`h-full rounded-full bg-indigo-500 ${barWidth(count)}`} />
+                  <div
+                    className={`h-full rounded-full bg-indigo-500 ${barWidth(count)}`}
+                  />
                 </div>
                 <b className="text-right text-slate-900">{count}</b>
               </div>
@@ -255,7 +267,9 @@ export default function Dashboard() {
             ].map(([label, value]: any) => (
               <div key={label} className="rounded-xl bg-slate-50 p-3">
                 <span className="text-xs text-slate-500">{label}</span>
-                <b className="mt-1 block text-xl text-slate-900">{value || 0}</b>
+                <b className="mt-1 block text-xl text-slate-900">
+                  {value || 0}
+                </b>
               </div>
             ))}
           </div>
@@ -269,40 +283,86 @@ export default function Dashboard() {
               <div>
                 <div className="flex items-center gap-2">
                   <PauseCircle size={18} className="text-amber-700" />
-                  <h2 className="font-semibold text-slate-900">Lead hold schedule</h2>
+                  <h2 className="font-semibold text-slate-900">
+                    Lead hold schedule
+                  </h2>
                 </div>
                 <p className="mt-1 max-w-3xl text-xs leading-5 text-amber-900/80">
-                  Choose the exact start and end date/time. Leads received during the window are stored but are not assigned, shown to sales, notified or sounded. The backend checks every 30 seconds and releases eligible leads after the end time.
+                  Choose the exact start and end date/time. Leads received
+                  during the window are stored but are not assigned, shown to
+                  sales, notified or sounded. The backend checks every 30
+                  seconds and releases eligible leads after the end time.
                 </p>
               </div>
               {schedule && (
-                <span className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-bold uppercase ${schedule.holding ? "bg-amber-200 text-amber-900" : "bg-emerald-100 text-emerald-700"}`}>
-                  {schedule.holding ? "Currently holding" : "Realtime delivery active"}
+                <span
+                  className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-bold uppercase ${schedule.holding ? "bg-amber-200 text-amber-900" : "bg-emerald-100 text-emerald-700"}`}
+                >
+                  {schedule.holding
+                    ? "Currently holding"
+                    : "Realtime delivery active"}
                 </span>
               )}
             </div>
 
             <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
               <label className="flex items-center gap-2 rounded-xl bg-white/80 p-3 text-sm font-semibold text-slate-700">
-                <input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} className="h-4 w-4 accent-indigo-600" /> Enable hold
+                <input
+                  type="checkbox"
+                  checked={form.enabled}
+                  onChange={(event) =>
+                    setForm({ ...form, enabled: event.target.checked })
+                  }
+                  className="h-4 w-4 accent-indigo-600"
+                />{" "}
+                Enable hold
               </label>
               <label className="text-xs font-semibold text-slate-700">
                 Hold starts
-                <input type="datetime-local" value={form.holdFrom} onChange={(event) => setForm({ ...form, holdFrom: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" />
+                <input
+                  type="datetime-local"
+                  value={form.holdFrom}
+                  onChange={(event) =>
+                    setForm({ ...form, holdFrom: event.target.value })
+                  }
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                />
               </label>
               <label className="text-xs font-semibold text-slate-700">
                 Hold ends
-                <input type="datetime-local" value={form.holdUntil} onChange={(event) => setForm({ ...form, holdUntil: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" />
+                <input
+                  type="datetime-local"
+                  value={form.holdUntil}
+                  onChange={(event) =>
+                    setForm({ ...form, holdUntil: event.target.value })
+                  }
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                />
               </label>
               <label className="text-xs font-semibold text-slate-700">
                 Timezone
-                <input value={form.timezone} onChange={(event) => setForm({ ...form, timezone: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" />
+                <input
+                  value={form.timezone}
+                  onChange={(event) =>
+                    setForm({ ...form, timezone: event.target.value })
+                  }
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                />
               </label>
               <div className="flex items-end gap-2">
-                <button disabled={saving} onClick={saveSchedule} className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                <button
+                  disabled={saving}
+                  onClick={saveSchedule}
+                  className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                >
                   <Save size={15} /> {saving ? "Saving..." : "Save"}
                 </button>
-                <button disabled={releasing} onClick={releaseNow} title="Release held leads now" className="min-h-[42px] rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:opacity-50">
+                <button
+                  disabled={releasing}
+                  onClick={releaseNow}
+                  title="Release held leads now"
+                  className="min-h-[42px] rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                >
                   {releasing ? "..." : "Release"}
                 </button>
               </div>
@@ -312,31 +372,91 @@ export default function Dashboard() {
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <h2 className="font-semibold text-slate-900">Salesperson lead capacity</h2>
-                <p className="text-xs text-slate-500">Automatic assignments use the configured daily limit. Manual Admin assignment can exceed it.</p>
+                <h2 className="font-semibold text-slate-900">
+                  Salesperson lead capacity
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Automatic assignments use the configured daily limit. Manual
+                  Admin assignment can exceed it.
+                </p>
               </div>
-              <span className="text-xs font-semibold text-indigo-600">{availableCapacity} automatic slots remaining</span>
+              <span className="text-xs font-semibold text-indigo-600">
+                {availableCapacity} automatic slots remaining
+              </span>
             </div>
 
             <div className="mt-4 overflow-x-auto">
               <table className="min-w-[720px] w-full text-left text-xs">
                 <thead className="bg-slate-50 text-slate-500">
-                  <tr>{["Salesperson", "Today", "Daily limit", "Remaining", "Status", "Action"].map((label) => <th key={label} className="px-4 py-3 font-semibold">{label}</th>)}</tr>
+                  <tr>
+                    {[
+                      "Salesperson",
+                      "Today",
+                      "Daily limit",
+                      "Remaining",
+                      "Status",
+                      "Action",
+                    ].map((label) => (
+                      <th key={label} className="px-4 py-3 font-semibold">
+                        {label}
+                      </th>
+                    ))}
+                  </tr>
                 </thead>
                 <tbody>
                   {capacity.map((item) => (
                     <tr key={item.userId} className="border-t border-slate-100">
-                      <td className="px-4 py-3"><b className="text-slate-900">{item.name}</b><span className="mt-0.5 block text-[10px] text-slate-400">{item.email}</span></td>
-                      <td className="px-4 py-3 font-semibold">{item.assignedToday}</td>
-                      <td className="px-4 py-3"><input defaultValue={item.dailyLeadLimit} type="number" min="0" max="1000" className="w-24 rounded-lg border border-slate-200 px-2 py-1.5" onBlur={(event) => { if (Number(event.target.value) !== item.dailyLeadLimit) void updateCapacity(item.userId, event.target.value); }} /></td>
-                      <td className="px-4 py-3 font-semibold text-indigo-700">{item.remaining}</td>
-                      <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.atCapacity ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>{item.atCapacity ? "At capacity" : "Available"}</span></td>
-                      <td className="px-4 py-3 text-slate-400">{capacitySaving === item.userId ? "Saving..." : "Automatic"}</td>
+                      <td className="px-4 py-3">
+                        <b className="text-slate-900">{item.name}</b>
+                        <span className="mt-0.5 block text-[10px] text-slate-400">
+                          {item.email}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-semibold">
+                        {item.assignedToday}
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          defaultValue={item.dailyLeadLimit}
+                          type="number"
+                          min="0"
+                          max="1000"
+                          className="w-24 rounded-lg border border-slate-200 px-2 py-1.5"
+                          onBlur={(event) => {
+                            if (
+                              Number(event.target.value) !== item.dailyLeadLimit
+                            )
+                              void updateCapacity(
+                                item.userId,
+                                event.target.value,
+                              );
+                          }}
+                        />
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-indigo-700">
+                        {item.remaining}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.atCapacity ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}
+                        >
+                          {item.atCapacity ? "At capacity" : "Available"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-400">
+                        {capacitySaving === item.userId
+                          ? "Saving..."
+                          : "Automatic"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {!capacity.length && <div className="p-8 text-center text-sm text-slate-500">No active salespeople found.</div>}
+              {!capacity.length && (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No active salespeople found.
+                </div>
+              )}
             </div>
           </section>
         </>
@@ -344,22 +464,49 @@ export default function Dashboard() {
 
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 p-5">
-          <h2 className="font-semibold text-slate-900">Recent {isAdmin ? "released" : "assigned"} leads</h2>
-          <p className="text-xs text-slate-500">{isAdmin ? "Workspace leads released for normal CRM work." : "Only leads assigned to you are shown."}</p>
+          <h2 className="font-semibold text-slate-900">
+            Recent {isAdmin ? "released" : "assigned"} leads
+          </h2>
+          <p className="text-xs text-slate-500">
+            {isAdmin
+              ? "Workspace leads released for normal CRM work."
+              : "Only leads assigned to you are shown."}
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-[760px] w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500">
-              <tr>{["Lead", "Business", "Source", "Status", "Owner", "Score"].map((label) => <th key={label} className="px-5 py-3 font-semibold">{label}</th>)}</tr>
+              <tr>
+                {["Lead", "Business", "Source", "Status", "Owner", "Score"].map(
+                  (label) => (
+                    <th key={label} className="px-5 py-3 font-semibold">
+                      {label}
+                    </th>
+                  ),
+                )}
+              </tr>
             </thead>
             <tbody>
               {leads.map((lead) => (
                 <tr key={lead._id} className="border-t border-slate-100">
-                  <td className="px-5 py-3"><b className="text-slate-900">{lead.name}</b><span className="mt-1 block text-[10px] text-slate-400">{lead.phone || lead.email || "No contact"}</span></td>
-                  <td className="px-5 py-3">{lead.businessProject?.name || "Unmapped"}</td>
+                  <td className="px-5 py-3">
+                    <b className="text-slate-900">{lead.name}</b>
+                    <span className="mt-1 block text-[10px] text-slate-400">
+                      {lead.phone || lead.email || "No contact"}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3">
+                    {lead.businessProject?.name || "Unmapped"}
+                  </td>
                   <td className="px-5 py-3">{lead.source}</td>
-                  <td className="px-5 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold">{lead.status}</span></td>
-                  <td className="px-5 py-3">{lead.assignedTo?.name || "Unassigned"}</td>
+                  <td className="px-5 py-3">
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold">
+                      {lead.status}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3">
+                    {lead.assignedTo?.name || "Unassigned"}
+                  </td>
                   <td className="px-5 py-3">{lead.score}</td>
                 </tr>
               ))}

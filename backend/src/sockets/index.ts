@@ -9,7 +9,6 @@ type SocketUser = {
   role: "ADMIN" | "MANAGER" | "SALES";
 };
 
-
 /**
  * Authenticate Socket.IO connections with the same JWT used by the API.
  */
@@ -24,7 +23,6 @@ function authenticateSocket(socket: any): SocketUser | null {
     return null;
   }
 }
-
 
 /**
  * Create the realtime server and place each user into only their authorized rooms.
@@ -68,9 +66,7 @@ export function setupSocket(httpServer: any) {
     );
 
     socket.on("disconnect", (reason) =>
-      console.log(
-        `[socket] disconnected ${socket.id}: ${reason}`,
-      ),
+      console.log(`[socket] disconnected ${socket.id}: ${reason}`),
     );
   });
 

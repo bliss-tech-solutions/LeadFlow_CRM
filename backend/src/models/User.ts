@@ -15,7 +15,10 @@ export interface IUser extends Document {
 
 const schema = new Schema<IUser>(
   {
-    name: { type: String, required: true },
+    name: {
+      type: String,
+      required: true,
+    },
     email: {
       type: String,
       required: true,
@@ -23,15 +26,29 @@ const schema = new Schema<IUser>(
       lowercase: true,
       index: true,
     },
-    passwordHash: { type: String, required: true },
+    passwordHash: {
+      type: String,
+      required: true,
+    },
     role: {
       type: String,
       enum: ["ADMIN", "MANAGER", "SALES"],
       default: "SALES",
     },
-    isActive: { type: Boolean, default: true },
-    dailyLeadLimit: { type: Number, default: 5, min: 0 },
-    autoLeadCount: { type: Number, default: 0, min: 0 },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    dailyLeadLimit: {
+      type: Number,
+      default: 5,
+      min: 0,
+    },
+    autoLeadCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     autoLeadCountDate: String,
   },
   { timestamps: true },

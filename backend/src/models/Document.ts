@@ -1,4 +1,5 @@
 import { Schema, model, Types, Document } from "mongoose";
+
 export interface ILeadDocument extends Document {
   lead?: Types.ObjectId;
   businessProject?: Types.ObjectId;
@@ -10,11 +11,23 @@ export interface ILeadDocument extends Document {
   sharedAt?: Date;
   openedAt?: Date;
 }
+
 const schema = new Schema<ILeadDocument>(
   {
-    lead: { type: Schema.Types.ObjectId, ref: "Lead" },
-    businessProject: { type: Schema.Types.ObjectId, ref: "BusinessProject", index: true },
-    uploadedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    lead: {
+      type: Schema.Types.ObjectId,
+      ref: "Lead",
+    },
+    businessProject: {
+      type: Schema.Types.ObjectId,
+      ref: "BusinessProject",
+      index: true,
+    },
+    uploadedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
     name: String,
     url: String,
     mimeType: String,

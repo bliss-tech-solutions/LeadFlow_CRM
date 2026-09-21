@@ -8,16 +8,12 @@ import { User } from "../models/User";
 
 const r = Router();
 
-
 /**
  * Build the follow-up visibility filter for the current user.
  */
 function visibleFollowupFilter(req: any) {
-  return req.user?.role === "ADMIN"
-    ? {}
-    : { user: req.user!.id };
+  return req.user?.role === "ADMIN" ? {} : { user: req.user!.id };
 }
-
 
 /**
  * GET /api/followups/stats
@@ -48,7 +44,6 @@ r.get("/stats", auth, async (req, res) => {
   });
 });
 
-
 /**
  * GET /api/followups
  * List follow-ups visible to the current user.
@@ -61,7 +56,6 @@ r.get("/", auth, async (req, res) => {
 
   res.json({ followups });
 });
-
 
 /**
  * PATCH /api/followups/:id/complete
@@ -83,7 +77,9 @@ r.patch("/:id/complete", auth, async (req, res) => {
   const ownerId = String((followup.user as any)?._id ?? followup.user);
 
   if (req.user?.role !== "ADMIN" && ownerId !== req.user!.id) {
-    return res.status(403).json({ message: "You do not have access to this follow-up" });
+    return res
+      .status(403)
+      .json({ message: "You do not have access to this follow-up" });
   }
 
   followup.status = "COMPLETED";
@@ -115,11 +111,10 @@ r.patch("/:id/complete", auth, async (req, res) => {
 
   const recipients = await User.find({
     isActive: true,
-    $or: [
-      { role: "ADMIN" },
-      { _id: ownerId },
-    ],
-  }).select("_id").lean();
+    $or: [{ role: "ADMIN" }, { _id: ownerId }],
+  })
+    .select("_id")
+    .lean();
 
   await Notification.insertMany(
     recipients.map((user) => ({

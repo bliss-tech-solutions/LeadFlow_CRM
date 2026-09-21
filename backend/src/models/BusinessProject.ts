@@ -80,15 +80,31 @@ export interface IBusinessProject extends Document {
 
 const documentSchema = new Schema<IProjectDocument>(
   {
-    name: { type: String, required: true },
-    url: { type: String, required: true },
-    category: { type: String, default: "BROCHURE" },
+    name: {
+      type: String,
+      required: true,
+    },
+    url: {
+      type: String,
+      required: true,
+    },
+    category: {
+      type: String,
+      default: "BROCHURE",
+    },
     mimeType: String,
     size: Number,
     description: String,
-    uploadedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    uploadedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
     storageKey: String,
-    isDemo: { type: Boolean, default: false },
+    isDemo: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );
@@ -172,4 +188,7 @@ schema.index({ "metaSources.pageId": 1 });
 schema.index({ "metaSources.adId": 1 });
 schema.index({ "metaSources.formId": 1 });
 
-export const BusinessProject = model<IBusinessProject>("BusinessProject", schema);
+export const BusinessProject = model<IBusinessProject>(
+  "BusinessProject",
+  schema,
+);

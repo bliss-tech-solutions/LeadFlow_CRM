@@ -73,7 +73,7 @@ app.use(
 );
 
 // Request logger
-// app.use(requestLogger);
+app.use(requestLogger);
 
 // Health
 app.get("/health", (_req, res) =>
@@ -104,35 +104,28 @@ app.use((_req, res) =>
 );
 
 // Error handler
-// app.use(
-//   (
-//     err: any,
-//     req: Request,
-//     res: Response,
-//     _next: NextFunction,
-//   ) => {
-//     const user = (req as any).user;
+app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  const user = (req as any).user;
 
-//     logger.error("Unhandled API Error", {
-//       method: req.method,
-//       url: req.originalUrl,
-//       statusCode: err?.statusCode || 500,
-//       errorType: err?.name || "UnknownError",
-//       errorCode: err?.code,
-//       message: err?.message || "Internal server error",
-//       stack: err?.stack,
-//       userId: user?.id || user?._id,
-//       userEmail: user?.email,
-//     });
+  logger.error("Unhandled API Error", {
+    method: req.method,
+    url: req.originalUrl,
+    statusCode: err?.statusCode || 500,
+    errorType: err?.name || "UnknownError",
+    errorCode: err?.code,
+    message: err?.message || "Internal server error",
+    stack: err?.stack,
+    userId: user?.id || user?._id,
+    userEmail: user?.email,
+  });
 
-//     res.status(err?.statusCode || 500).json({
-//       message:
-//         err?.statusCode && err.statusCode < 500
-//           ? err.message
-//           : "Internal server error",
-//     });
-//   },
-// );
+  res.status(err?.statusCode || 500).json({
+    message:
+      err?.statusCode && err.statusCode < 500
+        ? err.message
+        : "Internal server error",
+  });
+});
 
 // Start server
 connectDB()
@@ -146,7 +139,9 @@ connectDB()
       // Check every 30 seconds so held leads are released within the next minute.
       const release = () => {
         releaseHeldLeads(io).catch((error) => {
-          logger.error("Failed to release held leads", { error: error?.message });
+          logger.error("Failed to release held leads", {
+            error: error?.message,
+          });
         });
       };
 
@@ -162,3 +157,4 @@ connectDB()
 
     process.exit(1);
   });
+  

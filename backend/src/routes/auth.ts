@@ -7,7 +7,6 @@ import { auth } from "../middleware/auth";
 
 const r = Router();
 
-
 /**
  * POST /api/auth/login
  * Authenticate an admin/manager or salesperson portal.
@@ -15,9 +14,17 @@ const r = Router();
 r.post("/login", async (req, res) => {
   const { email, password, portal = "ADMIN" } = req.body ?? {};
 
-  const u = await User.findOne({ email: String(email ?? "").trim().toLowerCase() });
+  const u = await User.findOne({
+    email: String(email ?? "")
+      .trim()
+      .toLowerCase(),
+  });
 
-  if (!u || !u.isActive || !(await bcrypt.compare(password ?? "", u.passwordHash))) {
+  if (
+    !u ||
+    !u.isActive ||
+    !(await bcrypt.compare(password ?? "", u.passwordHash))
+  ) {
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
@@ -34,17 +41,26 @@ r.post("/login", async (req, res) => {
   }
 
   const token = jwt.sign(
-    { id: u.id, name: u.name, email: u.email, role: u.role },
+    {
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+    },
     env.JWT_SECRET,
     { expiresIn: env.JWT_EXPIRES_IN as any },
   );
 
   res.json({
     token,
-    user: { id: u.id, name: u.name, email: u.email, role: u.role },
+    user: {
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+    },
   });
 });
-
 
 /**
  * GET /api/auth/me

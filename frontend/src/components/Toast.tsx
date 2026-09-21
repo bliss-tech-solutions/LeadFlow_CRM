@@ -4,7 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { socket } from "../lib/socket";
 import { getUser } from "../lib/auth";
 import { api } from "../lib/api";
-import { playNotificationSound, unlockNotificationSound } from "../lib/notificationSound";
+import {
+  playNotificationSound,
+  unlockNotificationSound,
+} from "../lib/notificationSound";
 import { X, UserPlus } from "lucide-react";
 
 export default function RealtimeToast() {
@@ -21,7 +24,10 @@ export default function RealtimeToast() {
       unlockNotificationSound().catch(() => undefined);
     };
 
-    window.addEventListener("pointerdown", unlock, { once: true, capture: true });
+    window.addEventListener("pointerdown", unlock, {
+      once: true,
+      capture: true,
+    });
     window.addEventListener("keydown", unlock, { once: true, capture: true });
 
     return () => {

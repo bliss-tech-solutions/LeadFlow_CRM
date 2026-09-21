@@ -33,11 +33,12 @@ function currentMinutesInTimezone(timezone: string) {
   }).formatToParts(new Date());
 
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
-  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value ?? 0,
+  );
 
   return hour * 60 + minute;
 }
-
 
 /**
  * Return the single global lead-delivery schedule used by the CRM.
@@ -54,7 +55,6 @@ export async function getDeliverySchedule() {
 
   return schedule;
 }
-
 
 /**
  * Check whether the current instant is inside the configured hold window.
@@ -89,7 +89,6 @@ export function isWithinHoldWindow(schedule: {
 
   return current >= start && current < end;
 }
-
 
 /**
  * Synchronize automatic assignment counters with released AUTO assignments for today.
@@ -154,7 +153,6 @@ async function refreshDailyCounters(timezone = "Asia/Kolkata") {
   return dateKey;
 }
 
-
 /**
  * Return today's automatic lead capacity for every active salesperson.
  */
@@ -171,9 +169,7 @@ export async function getSalesCapacity(timezone = "Asia/Kolkata") {
 
   return users.map((user) => {
     const assignedToday =
-      user.autoLeadCountDate === dateKey
-        ? Number(user.autoLeadCount || 0)
-        : 0;
+      user.autoLeadCountDate === dateKey ? Number(user.autoLeadCount || 0) : 0;
     const limit = Math.max(0, Number(user.dailyLeadLimit ?? 5));
 
     return {
@@ -187,7 +183,6 @@ export async function getSalesCapacity(timezone = "Asia/Kolkata") {
     };
   });
 }
-
 
 /**
  * Atomically claim one available salesperson for an automatic lead assignment.
@@ -249,7 +244,6 @@ export async function chooseRandomSalesperson() {
 
   return null;
 }
-
 
 /**
  * Release held leads after the exact hold window ends and deliver them normally.

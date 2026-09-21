@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { Activity } from "../models/Activity";
 import { Audit } from "../models/Audit";
+
 export async function logActivity(input: {
   lead: string | any;
   actor?: string;
@@ -18,6 +19,7 @@ export async function logActivity(input: {
     metadata: input.metadata,
   });
 }
+
 export async function logAudit(input: {
   actor?: string;
   action: string;
