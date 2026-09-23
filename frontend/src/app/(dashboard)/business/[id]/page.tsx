@@ -14,6 +14,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import ConfirmationModal from "../../../../components/ConfirmationModal";
 
 const demoDocuments = [
   { name: "Project Brochure (Demo)", category: "BROCHURE", isDemo: true },
@@ -41,6 +42,8 @@ export default function BusinessProjectDetail() {
   const [uploading, setUploading] = useState(false);
   const [category, setCategory] = useState("BROCHURE");
   const [error, setError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     try {
@@ -121,24 +124,28 @@ export default function BusinessProjectDetail() {
     }
   }
 
-  async function deleteDocument(document: any) {
+  function requestDeleteDocument(document: any) {
     if (!isAdmin || document.isDemo) return;
+    setDeleteTarget(document);
+  }
 
-    if (
-      !window.confirm(
-        `Delete ${document.name}? This removes the file from AWS S3.`,
-      )
-    ) {
-      return;
-    }
+  async function confirmDeleteDocument() {
+    if (!deleteTarget) return;
 
     try {
-      await api(`/business-projects/${id}/documents/${document._id}`, {
+      setDeleting(true);
+      setError("");
+
+      await api(`/business-projects/${id}/documents/${deleteTarget._id}`, {
         method: "DELETE",
       });
+
+      setDeleteTarget(null);
       await load();
     } catch (requestError: any) {
       setError(requestError?.message || "Unable to delete document");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -344,7 +351,7 @@ export default function BusinessProjectDetail() {
                       />
                       {isAdmin && !document.isDemo && (
                         <button
-                          onClick={() => void deleteDocument(document)}
+                          onClick={() => requestDeleteDocument(document)}
                           title="Delete document"
                           className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-rose-500 hover:bg-rose-50"
                         >
@@ -486,6 +493,22 @@ export default function BusinessProjectDetail() {
           </section>
         </aside>
       </div>
+      <ConfirmationModal
+        open={!!deleteTarget}
+        title="Delete document?"
+        message={
+          deleteTarget
+            ? `Are you sure you want to delete "${deleteTarget.name}"? This will permanently remove it from AWS S3 and cannot be undone.`
+            : ""
+        }
+        confirmText="Delete document"
+        cancelText="Keep document"
+        loading={deleting}
+        onCancel={() => {
+          if (!deleting) setDeleteTarget(null);
+        }}
+        onConfirm={() => void confirmDeleteDocument()}
+      />
     </div>
   );
 }
