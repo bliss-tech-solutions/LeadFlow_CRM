@@ -1,10 +1,11 @@
 import "dotenv/config";
 import { z } from "zod";
 
-
 const schema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(4000),
   MONGO_URI: z.string().default("mongodb://127.0.0.1:27017/leadflow_crm"),
+  MONGO_DB_NAME: z.string().default("leadflow"),
   JWT_SECRET: z.string().default("dev-secret-change-me"),
   JWT_EXPIRES_IN: z.string().default("1d"),
   FRONTEND_URL: z.string().default("http://localhost:3000"),
@@ -21,5 +22,16 @@ const schema = z.object({
   AWS_S3_PRESIGN_EXPIRES: z.coerce.number().default(900),
 });
 
-
 export const env = schema.parse(process.env);
+
+if (env.NODE_ENV === "production") {
+  if (env.MONGO_URI === "mongodb://127.0.0.1:27017/leadflow_crm") {
+    throw new Error("MONGO_URI must be configured for production");
+  }
+  if (env.JWT_SECRET === "dev-secret-change-me" || env.JWT_SECRET.length < 32) {
+    throw new Error("JWT_SECRET must be a strong 32+ character secret in production");
+  }
+  if (env.META_VERIFY_TOKEN === "leadflow-demo-token") {
+    throw new Error("META_VERIFY_TOKEN must be configured for production");
+  }
+}

@@ -9,12 +9,13 @@ const r = Router();
  * Return the current user's latest notifications.
  */
 r.get("/", auth, async (req, res) => {
-  const notifications = await Notification.find({ user: req.user!.id })
+  const notifications = await Notification.find({ user: req.user!.id, type: { $ne: "LEAD_ASSIGNED" } })
     .sort({ createdAt: -1 })
     .limit(50);
 
   const unreadCount = await Notification.countDocuments({
     user: req.user!.id,
+    type: { $ne: "LEAD_ASSIGNED" },
     readAt: null,
   });
 

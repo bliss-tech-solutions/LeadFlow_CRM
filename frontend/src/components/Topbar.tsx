@@ -55,21 +55,25 @@ export default function Topbar({
     window.addEventListener("leadflow:sound-enabled", syncSoundState);
     loadNotifications();
 
-    const interval = window.setInterval(loadNotifications, 15000);
-    const onNewLead = () => loadNotifications();
-    const onFollowup = () => loadNotifications();
-    const onAssignment = () => loadNotifications();
+    const onNewLead = () => void loadNotifications();
+    const onFollowup = () => void loadNotifications();
+    const onCall = () => void loadNotifications();
+    const onReminder = () => void loadNotifications();
+    const onCapacity = () => void loadNotifications();
 
     socket.on("new_lead", onNewLead);
     socket.on("followup_updated", onFollowup);
-    socket.on("lead_assigned", onAssignment);
+    socket.on("followup_reminder", onReminder);
+    socket.on("call_logged", onCall);
+    socket.on("capacity_updated", onCapacity);
 
     return () => {
       window.removeEventListener("leadflow:sound-enabled", syncSoundState);
-      clearInterval(interval);
       socket.off("new_lead", onNewLead);
       socket.off("followup_updated", onFollowup);
-      socket.off("lead_assigned", onAssignment);
+      socket.off("followup_reminder", onReminder);
+      socket.off("call_logged", onCall);
+      socket.off("capacity_updated", onCapacity);
     };
   }, []);
 
@@ -149,11 +153,11 @@ export default function Topbar({
           <button
             onClick={() => setOpen((value) => !value)}
             aria-label="Notifications"
-            className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50"
+            className="relative grid h-10 w-10 place-items-center rounded-xl border border-blue-200 bg-blue-50 text-slate-600 shadow-sm hover:bg-slate-50"
           >
-            <Bell size={18} />
+            <Bell size={18}  className="text-blue-500"/>
             {unread > 0 && (
-              <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-rose-500" />
+              <span className="absolute flex items-center justify-center -right-2 font-semibold text-xs -top-2 w-6 h-6  rounded-full bg-blue-300">{unread> 10 ? "10+" : unread}</span>
             )}
           </button>
 

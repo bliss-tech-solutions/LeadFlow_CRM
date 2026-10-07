@@ -112,7 +112,7 @@ During the window:
 - It does not emit a salesperson `new_lead` event.
 - It does not play the new-lead sound.
 
-The backend checks every 30 seconds. After the end instant, eligible leads are released within the next minute, capacity is checked, and normal realtime delivery resumes.
+The backend checks the hold window every 30 seconds. Follow-up reminders are checked hourly using an exact `reminderAt = scheduledAt - 24h` timestamp.
 
 ## Notifications and realtime scoping
 
@@ -130,7 +130,7 @@ SALES
 
 Socket.IO verifies the JWT on connection, so a salesperson cannot manually join the admin room.
 
-The browser uses one shared notification audio instance. The socket event and polling fallback deduplicate by lead ID, so one lead produces at most one lead sound in the UI.
+The browser uses one shared notification audio instance. Realtime Socket.IO events are the primary delivery path; there is no 5-second `/api/leads?limit=1` polling loop. Events are scoped to the authenticated user/management room.
 
 ## Local development
 
@@ -221,3 +221,5 @@ Private AWS S3 bucket
 Do not expose Meta tokens, AWS secrets or JWT secrets through `NEXT_PUBLIC_*` variables.
 
 For production multi-business Meta onboarding, replace the prototype global `META_ACCESS_TOKEN` with per-connection/page credentials selected from the webhook's originating `page_id`.
+
+

@@ -26,6 +26,16 @@ const callResults = [
   "WRONG_NUMBER",
   "CALLBACK_REQUESTED",
 ];
+const statusStyles: Record<string, string> = {
+  NEW: "bg-sky-50 text-sky-700 ring-sky-200",
+  CONTACTED: "bg-slate-100 text-slate-700 ring-slate-200",
+  INTERESTED: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  FOLLOW_UP: "bg-amber-50 text-amber-700 ring-amber-200",
+  SCHEDULED: "bg-violet-50 text-violet-700 ring-violet-200",
+  WON: "bg-green-100 text-green-800 ring-green-200",
+  LOST: "bg-rose-50 text-rose-700 ring-rose-200",
+  NOT_INTERESTED: "bg-red-50 text-red-700 ring-red-200",
+};
 const statuses = [
   "NEW",
   "CONTACTED",
@@ -79,7 +89,7 @@ export default function LeadDetail() {
   async function load() {
     const d = await api(`/leads/${id}`);
     setData(d);
-    if (!users.length) {
+    if (currentUser?.role === "ADMIN" && !users.length) {
       try {
         const u = await api("/users");
         setUsers(u.users || []);
@@ -171,8 +181,10 @@ export default function LeadDetail() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-bold text-indigo-700">
-                    {lead.status}
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${statusStyles[lead.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}
+                  >
+                    {String(lead.status || "NEW").replaceAll("_", " ")}
                   </span>
                   {lead.deliveryStatus === "HELD" && (
                     <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">
@@ -270,17 +282,29 @@ export default function LeadDetail() {
                   </p>
                 </div>
               </div>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                {project.products?.map((p: any, i: number) => (
-                  <div key={i} className="rounded-xl bg-white p-3">
-                    <b className="text-xs text-slate-900">
-                      {p.customType || p.type}
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {(project.products || []).map((product: any, index: number) => (
+                  <div
+                    key={index}
+                    className="rounded-xl border border-slate-100 bg-white p-4"
+                  >
+                    <b className="text-sm text-slate-900">
+                      {product.customType || product.type}
                     </b>
-                    <span className="mt-1 block text-[10px] text-slate-500">
-                      {Object.entries(p.details || {})
-                        .map(([k, v]) => `${k}: ${v}`)
-                        .join(" · ") || "No product details"}
-                    </span>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {Object.entries(product.details || {}).map(
+                        ([key, value]) => (
+                          <div key={key}>
+                            <span className="text-[10px] font-semibold uppercase text-slate-400">
+                              {key}
+                            </span>
+                            <p className="break-words text-xs text-slate-700">
+                              {String(value) || "—"}
+                            </p>
+                          </div>
+                        ),
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -370,7 +394,7 @@ export default function LeadDetail() {
               </div>
               <Clock3 size={17} />
             </div>
-            <div className="mt-5">
+            <div className="mt-5 max-h-[50vh] overflow-y-scroll">
               {data.activities.map((a: any, i: number) => (
                 <div key={a._id} className="flex gap-3">
                   <div className="flex w-7 flex-col items-center">

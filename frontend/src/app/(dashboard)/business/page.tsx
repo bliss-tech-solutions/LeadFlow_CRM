@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Topbar from "../../../components/Topbar";
+import Pagination from "../../../components/Pagination";
 import { api } from "../../../lib/api";
+import { isAuthError } from "../../../lib/auth";
 import { getUser } from "../../../lib/auth";
 import {
   Building2,
@@ -14,6 +16,7 @@ import {
   Plus,
   Trash2,
   Upload,
+  Search,
   X,
 } from "lucide-react";
 
@@ -89,6 +92,9 @@ export default function BusinessProjects() {
   const isAdmin = user?.role === "ADMIN";
 
   const [projects, setProjects] = useState<any[]>([]);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState({ total: 0, pages: 1 });
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
@@ -107,28 +113,49 @@ export default function BusinessProjects() {
   const [assigning, setAssigning] = useState(false);
   const [form, setForm] = useState<any>(emptyForm);
 
-  async function load() {
+  async function load(currentPage = page, currentSearch = search) {
     try {
-      const data = await api("/business-projects");
+      const params = new URLSearchParams({ page: String(currentPage), limit: "10" });
+      if (currentSearch.trim()) params.set("search", currentSearch.trim());
+      const data = await api(`/business-projects?${params.toString()}`);
       setProjects(data.projects || []);
+      setMeta({ total: data.total || 0, pages: data.pages || 1 });
 
-      if (isAdmin) {
-        const users = await api("/users");
-        setSalesUsers(
-          (users.users || []).filter(
-            (item: any) => item.role === "SALES" && item.isActive !== false,
-          ),
-        );
-      }
     } catch (requestError) {
-      console.error("[business] load failed", requestError);
+      if (!isAuthError(requestError)) {
+        console.error("[business] load failed", requestError);
+      }
       setProjects([]);
     }
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    setPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void load(page, search);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [page, search]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    void api("/users")
+      .then((users) => {
+        setSalesUsers(
+          (users.users || []).filter(
+            (item: any) => item.role === "SALES" && item.isActive !== false,
+          ),
+        );
+      })
+      .catch((error) => {
+        if (!isAuthError(error)) {
+          console.error("[business] sales users load failed", error);
+        }
+      });
+  }, [isAdmin]);
 
   function reset() {
     setStep(1);
@@ -395,6 +422,21 @@ export default function BusinessProjects() {
         </div>
       )}
 
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex h-10 w-full max-w-md items-center gap-2 rounded-xl border border-slate-200 px-3 text-slate-400">
+            <Search size={15} />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search business, developer, RERA, stage..."
+              className="w-full text-sm outline-none"
+            />
+          </div>
+          <span className="text-xs text-slate-400 sm:ml-auto">10 businesses per page · latest updated first</span>
+        </div>
+      </section>
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {projects.map((project) => (
           <div
@@ -470,6 +512,8 @@ export default function BusinessProjects() {
           </div>
         )}
       </div>
+
+      <Pagination page={page} pages={meta.pages} total={meta.total} label="business projects" onChange={setPage} />
 
       {isAdmin && open && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-5">

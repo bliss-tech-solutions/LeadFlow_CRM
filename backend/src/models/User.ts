@@ -11,6 +11,8 @@ export interface IUser extends Document {
   dailyLeadLimit: number;
   autoLeadCount: number;
   autoLeadCountDate?: string;
+  profilePhotoUrl?: string;
+  profilePhotoKey?: string;
 }
 
 const schema = new Schema<IUser>(
@@ -50,6 +52,8 @@ const schema = new Schema<IUser>(
       min: 0,
     },
     autoLeadCountDate: String,
+    profilePhotoUrl: String,
+    profilePhotoKey: String,
   },
   { timestamps: true },
 );

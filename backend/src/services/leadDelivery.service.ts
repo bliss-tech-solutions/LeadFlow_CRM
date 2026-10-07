@@ -59,6 +59,25 @@ export async function getDeliverySchedule() {
 /**
  * Check whether the current instant is inside the configured hold window.
  */
+export type DeliveryScheduleState = "DISABLED" | "SCHEDULED" | "ACTIVE" | "EXPIRED";
+
+export function getDeliveryScheduleState(schedule: {
+  enabled: boolean;
+  holdFrom?: Date | null;
+  holdUntil?: Date | null;
+}) : DeliveryScheduleState {
+  if (!schedule.enabled) return "DISABLED";
+
+  const now = Date.now();
+  const start = schedule.holdFrom ? new Date(schedule.holdFrom).getTime() : NaN;
+  const end = schedule.holdUntil ? new Date(schedule.holdUntil).getTime() : NaN;
+
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "DISABLED";
+  if (now < start) return "SCHEDULED";
+  if (now >= start && now < end) return "ACTIVE";
+  return "EXPIRED";
+}
+
 export function isWithinHoldWindow(schedule: {
   enabled: boolean;
   holdFrom?: Date | null;
@@ -310,7 +329,7 @@ export async function releaseHeldLeads(io: any) {
       },
       ...(
         await User.find({
-          role: "ADMIN",
+          role: { $in: ["ADMIN", "MANAGER"] },
           isActive: true,
         })
           .select("_id")

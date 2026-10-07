@@ -8,6 +8,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "../config/env";
 
 function getS3Client() {
+
   if (
     !env.AWS_REGION ||
     !env.AWS_S3_BUCKET ||
@@ -56,6 +57,13 @@ export async function createDocumentDownloadUrl(key: string) {
     }),
     { expiresIn: env.AWS_S3_PRESIGN_EXPIRES },
   );
+}
+
+export function createPublicObjectUrl(key: string) {
+  if (!env.AWS_S3_BUCKET || !env.AWS_REGION) {
+    throw new Error("AWS S3 is not configured.");
+  }
+  return `https://${env.AWS_S3_BUCKET}.s3.${env.AWS_REGION}.amazonaws.com/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 export async function deleteDocumentObject(key: string) {

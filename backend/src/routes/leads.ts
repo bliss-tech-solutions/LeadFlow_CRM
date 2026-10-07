@@ -111,6 +111,13 @@ r.get("/", auth, async (req, res) => {
       { name: { $regex: search, $options: "i" } },
       { email: { $regex: search, $options: "i" } },
       { phone: { $regex: search, $options: "i" } },
+      { source: { $regex: search, $options: "i" } },
+      { campaign: { $regex: search, $options: "i" } },
+      { formName: { $regex: search, $options: "i" } },
+      { "meta.businessId": { $regex: search, $options: "i" } },
+      { "meta.pageId": { $regex: search, $options: "i" } },
+      { "meta.fieldData.name": { $regex: search, $options: "i" } },
+      { "meta.fieldData.values": { $regex: search, $options: "i" } },
     ];
   }
 
@@ -121,7 +128,7 @@ r.get("/", auth, async (req, res) => {
     Lead.find(q)
       .populate("assignedTo", "name email")
       .populate("businessProject", "name stage documents products")
-      .sort({ createdAt: -1 })
+      .sort({ updatedAt: -1 })
       .skip((p - 1) * l)
       .limit(l),
     Lead.countDocuments(q),
@@ -184,7 +191,7 @@ r.get("/:id", auth, async (req, res) => {
       .sort({ createdAt: -1 }),
     FollowUp.find({ lead: lead._id })
       .populate("user", "name")
-      .sort({ scheduledAt: 1 }),
+      .sort({ createdAt: -1, updatedAt: -1 }),
   ]);
 
   res.json({ lead, activities, calls, followups });
@@ -295,37 +302,13 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
     ip: req.ip,
   });
 
-  await Notification.insertMany([
-    {
-      user: user._id,
-      type: "LEAD_ASSIGNED",
-      title: "Lead assigned to you",
-      message: `${lead.name} was assigned to you by Admin.`,
-      entityType: "Lead",
-      entityId: lead.id,
-    },
-    ...(
-      await User.find({ role: "ADMIN", isActive: true }).select("_id").lean()
-    ).map((admin) => ({
-      user: admin._id,
-      type: "LEAD_ASSIGNED",
-      title: "Lead manually assigned",
-      message: `${lead.name} was assigned to ${user.name}.`,
-      entityType: "Lead",
-      entityId: lead.id,
-    })),
-  ]);
-
   const io = req.app.get("io");
 
+  // Assignment is an internal state change, not a user notification.
+  // The lead notification is the only lead popup shown to users.
   if (io) {
-    io.to(`user:${user.id}`).emit("lead_assigned", {
-      lead: lead.toObject(),
-    });
-
-    io.to("role:ADMIN").emit("lead_assigned", {
-      lead: lead.toObject(),
-    });
+    io.to("role:ADMIN").emit("lead_updated", { lead: lead.toObject(), reason: "ASSIGNED" });
+    io.to(`user:${user.id}`).emit("lead_updated", { lead: lead.toObject(), reason: "ASSIGNED" });
   }
 
   res.json({ lead });
@@ -368,6 +351,30 @@ r.post("/:id/calls", auth, async (req, res) => {
     description: req.body.notes,
   });
 
+  const populatedLead = await Lead.findById(req.params.id).select("name phone email source campaign status assignedTo").lean();
+  const callMessage = `${populatedLead?.name || "Lead"} · Call ${String(req.body.result || "COMPLETED").replace(/_/g, " ").toLowerCase()}${req.body.notes ? ` · ${String(req.body.notes).trim()}` : ""}`;
+  const recipients = await User.find({
+    isActive: true,
+    $or: [{ role: { $in: ["ADMIN", "MANAGER"] } }, { _id: req.user!.id }],
+  }).select("_id").lean();
+  if (recipients.length) {
+    await Notification.insertMany(recipients.map((recipient) => ({
+      user: recipient._id,
+      type: "CALL_LOGGED",
+      title: "Call logged",
+      message: callMessage,
+      entityType: "Lead",
+      entityId: req.params.id,
+    })));
+  }
+
+  const io = req.app.get("io");
+  if (io && populatedLead) {
+    const payload = { call: { ...call.toObject(), lead: populatedLead }, lead: populatedLead };
+    io.to("role:ADMIN").emit("call_logged", payload);
+    io.to(`user:${req.user!.id}`).emit("call_logged", payload);
+  }
+
   res.status(201).json({ call });
 });
 
@@ -396,15 +403,32 @@ r.post("/:id/followups", auth, async (req, res) => {
       .json({ message: "Follow-up must be scheduled in the future" });
   }
 
+  // Admins may explicitly choose a follow-up owner. If they do not,
+  // the follow-up must follow the lead's existing salesperson assignment
+  // instead of silently becoming an Admin-owned follow-up.
+  const leadForFollowup = await Lead.findById(req.params.id)
+    .select("assignedTo name")
+    .lean();
+
+  if (!leadForFollowup) {
+    return res.status(404).json({ message: "Lead not found" });
+  }
+
+  const requestedOwnerId = String(req.body?.userId ?? "").trim();
+  const defaultOwnerId = leadForFollowup.assignedTo
+    ? String(leadForFollowup.assignedTo)
+    : req.user!.id;
+
   const followupUserId =
     req.user!.role === "ADMIN"
-      ? (req.body.userId ?? req.user!.id)
+      ? (requestedOwnerId || defaultOwnerId)
       : req.user!.id;
 
   const assignedUser = await User.findOne({
     _id: followupUserId,
     isActive: true,
-  }).select("_id name");
+    role: { $in: ["ADMIN", "MANAGER", "SALES"] },
+  }).select("_id name email role");
 
   if (!assignedUser) {
     return res.status(400).json({ message: "Follow-up owner is invalid" });
@@ -415,6 +439,7 @@ r.post("/:id/followups", auth, async (req, res) => {
     user: assignedUser._id,
     type: req.body.type ?? "CALL",
     scheduledAt,
+    reminderAt: new Date(scheduledAt.getTime() - 24 * 60 * 60 * 1000),
     notes: req.body.notes,
   });
 
@@ -431,19 +456,32 @@ r.post("/:id/followups", auth, async (req, res) => {
     description: `${new Date(f.scheduledAt).toLocaleString()} · ${assignedUser.name}`,
   });
 
+  // The assigned salesperson/owner and all workspace managers/admins are
+  // notified. The recipient query is de-duplicated by MongoDB's $or match,
+  // so an Admin who owns a follow-up does not receive duplicate DB records.
   const recipients = await User.find({
     isActive: true,
-    $or: [{ role: "ADMIN" }, { _id: assignedUser._id }],
+    $or: [
+      { role: { $in: ["ADMIN", "MANAGER"] } },
+      { _id: assignedUser._id },
+    ],
   })
     .select("_id")
     .lean();
+
+  const populatedFollowup = await FollowUp.findById(f._id)
+    .populate("lead", "name email phone status")
+    .populate("user", "name email role")
+    .lean();
+
+  const notificationMessage = `${populatedFollowup?.lead && typeof populatedFollowup.lead === "object" ? populatedFollowup.lead.name : leadForFollowup.name || "Lead"} · ${f.type} follow-up scheduled for ${new Date(f.scheduledAt).toLocaleString()} for ${assignedUser.name}.`;
 
   await Notification.insertMany(
     recipients.map((user) => ({
       user: user._id,
       type: "FOLLOWUP_CREATED",
       title: "Follow-up scheduled",
-      message: `A ${f.type} follow-up is scheduled for ${new Date(f.scheduledAt).toLocaleString()}.`,
+      message: notificationMessage,
       entityType: "Lead",
       entityId: req.params.id,
     })),
@@ -451,19 +489,21 @@ r.post("/:id/followups", auth, async (req, res) => {
 
   const io = req.app.get("io");
 
-  if (io) {
-    io.to("role:ADMIN").emit("followup_updated", {
-      followUp: f.toObject(),
-      action: "CREATED",
-    });
+  if (io && populatedFollowup) {
+    const payload = {
+      followUp: populatedFollowup,
+      action: "FOLLOWUP_CREATED",
+      actorId: req.user!.id,
+    };
 
-    io.to(`user:${assignedUser.id}`).emit("followup_updated", {
-      followUp: f.toObject(),
-      action: "CREATED",
-    });
+    // Admin/manager workspace notification.
+    io.to("role:ADMIN").emit("followup_updated", payload);
+
+    // The actual owner receives the same event even when an Admin created it.
+    io.to(`user:${assignedUser.id}`).emit("followup_updated", payload);
   }
 
-  res.status(201).json({ followUp: f });
+  res.status(201).json({ followUp: populatedFollowup ?? f });
 });
 
 export default r;

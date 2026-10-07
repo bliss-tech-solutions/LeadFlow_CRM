@@ -57,7 +57,7 @@ export function setupSocket(httpServer: any) {
     socket.join(`user:${user.id}`);
 
     // Only a server-verified ADMIN can join the global admin room.
-    if (user.role === "ADMIN") {
+    if (user.role === "ADMIN" || user.role === "MANAGER") {
       socket.join("role:ADMIN");
     }
 

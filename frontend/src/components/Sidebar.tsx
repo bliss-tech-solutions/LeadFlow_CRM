@@ -10,6 +10,7 @@ import {
   LogOut,
   ShieldCheck,
   Building2,
+  Settings,
 } from "lucide-react";
 import { getUser, logout } from "../lib/auth";
 
@@ -25,10 +26,10 @@ export default function Sidebar() {
       ? [
           ["/business", "Business Projects", Building2],
           ["/team", "Sales Team", UserRound],
-          ["/audit", "Audit Log", ShieldCheck],
           ["/integration", "Meta Setup", ShieldCheck],
         ]
       : []),
+    ["/settings", "Settings", Settings],
   ];
 
   return (

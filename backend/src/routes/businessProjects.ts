@@ -66,12 +66,33 @@ r.get("/", auth, async (req, res) => {
     filter._id = { $in: projectIds };
   }
 
-  const projects = await BusinessProject.find(filter)
-    .populate("createdBy", "name")
-    .sort({ createdAt: -1 })
-    .lean();
+  const { search = "", page = "1", limit = "10" } =
+    req.query as Record<string, string>;
 
-  res.json({ projects });
+  const normalizedSearch = String(search).trim();
+  if (normalizedSearch) {
+    filter.$or = [
+      { name: { $regex: normalizedSearch, $options: "i" } },
+      { developerGroup: { $regex: normalizedSearch, $options: "i" } },
+      { reraNumber: { $regex: normalizedSearch, $options: "i" } },
+      { stage: { $regex: normalizedSearch, $options: "i" } },
+    ];
+  }
+
+  const p = Math.max(1, Number(page) || 1);
+  const l = Math.min(50, Math.max(1, Number(limit) || 10));
+
+  const [projects, total] = await Promise.all([
+    BusinessProject.find(filter)
+      .populate("createdBy", "name")
+      .sort({ updatedAt: -1 })
+      .skip((p - 1) * l)
+      .limit(l)
+      .lean(),
+    BusinessProject.countDocuments(filter),
+  ]);
+
+  res.json({ projects, total, page: p, pages: Math.ceil(total / l) });
 });
 
 /**
@@ -465,23 +486,6 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   }
 
   if (leads.length) {
-    const recipients = await User.find({
-      isActive: true,
-      $or: [{ role: "ADMIN" }, { _id: user._id }],
-    })
-      .select("_id")
-      .lean();
-
-    await Notification.insertMany(
-      recipients.map((recipient) => ({
-        user: recipient._id,
-        type: "LEAD_ASSIGNED",
-        title: "Project leads assigned",
-        message: `${leads.length} ${project.name} lead${leads.length === 1 ? "" : "s"} assigned to ${user.name}.`,
-        entityType: "BusinessProject",
-        entityId: project.id,
-      })),
-    );
 
     const io = req.app.get("io");
     if (io) {

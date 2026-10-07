@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Topbar from "../../../components/Topbar";
 import { api } from "../../../lib/api";
 import { socket } from "../../../lib/socket";
-import { getUser } from "../../../lib/auth";
+import { getUser, isAuthError } from "../../../lib/auth";
 import {
   ArrowUpRight,
   CalendarCheck,
@@ -15,6 +15,28 @@ import {
   Save,
   Users,
 } from "lucide-react";
+
+const statuses = [
+  "NEW",
+  "CONTACTED",
+  "INTERESTED",
+  "FOLLOW_UP",
+  "SCHEDULED",
+  "WON",
+  "LOST",
+  "NOT_INTERESTED",
+];
+
+const statusStyles: Record<string, string> = {
+  NEW: "bg-sky-50 text-sky-700 ring-sky-200",
+  CONTACTED: "bg-slate-100 text-slate-700 ring-slate-200",
+  INTERESTED: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  FOLLOW_UP: "bg-amber-50 text-amber-700 ring-amber-200",
+  SCHEDULED: "bg-violet-50 text-violet-700 ring-violet-200",
+  WON: "bg-green-100 text-green-800 ring-green-200",
+  LOST: "bg-rose-50 text-rose-700 ring-rose-200",
+  NOT_INTERESTED: "bg-red-50 text-red-700 ring-red-200",
+};
 
 function toLocalInput(value?: string | Date | null) {
   if (!value) return "";
@@ -41,6 +63,8 @@ export default function Dashboard() {
   });
   const [saving, setSaving] = useState(false);
   const [capacitySaving, setCapacitySaving] = useState<string | null>(null);
+  const [capacityModal, setCapacityModal] = useState<any>(null);
+  const [capacityValue, setCapacityValue] = useState("");
   const [releasing, setReleasing] = useState(false);
 
   async function load() {
@@ -76,7 +100,9 @@ export default function Dashboard() {
         setFollowupStats(f || {});
       }
     } catch (error) {
-      console.error("[dashboard] load failed", error);
+      if (!isAuthError(error)) {
+        console.error("[dashboard] load failed", error);
+      }
     }
   }
 
@@ -86,12 +112,14 @@ export default function Dashboard() {
     const refresh = () => void load();
     socket.on("followup_updated", refresh);
     socket.on("new_lead", refresh);
-    socket.on("lead_assigned", refresh);
+    socket.on("lead_updated", refresh);
+    socket.on("call_logged", refresh);
 
     return () => {
       socket.off("followup_updated", refresh);
       socket.off("new_lead", refresh);
-      socket.off("lead_assigned", refresh);
+      socket.off("lead_updated", refresh);
+      socket.off("call_logged", refresh);
     };
   }, []);
 
@@ -123,18 +151,26 @@ export default function Dashboard() {
     }
   }
 
-  async function updateCapacity(userId: string, value: string) {
-    const limit = Number(value);
+  function openCapacityModal(item: any) {
+    setCapacityModal(item);
+    setCapacityValue(String(item.dailyLeadLimit));
+  }
 
-    if (!Number.isFinite(limit) || limit < 0) return;
+  async function updateCapacity() {
+    if (!capacityModal) return;
+    const limit = Number(capacityValue);
+    if (!Number.isFinite(limit) || limit < 0 || limit > 1000) {
+      alert("Daily limit must be between 0 and 1000.");
+      return;
+    }
 
-    setCapacitySaving(userId);
-
+    setCapacitySaving(capacityModal.userId);
     try {
-      await api(`/users/${userId}/capacity`, {
+      await api(`/users/${capacityModal.userId}/capacity`, {
         method: "PATCH",
         body: JSON.stringify({ dailyLeadLimit: Math.floor(limit) }),
       });
+      setCapacityModal(null);
       await load();
     } catch (error: any) {
       alert(error?.message || "Unable to update capacity");
@@ -183,7 +219,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-5 pb-10">
+    <div className="space-y-5 pb-10">
       <Topbar
         title="Dashboard"
         subtitle={
@@ -295,13 +331,42 @@ export default function Dashboard() {
                 </p>
               </div>
               {schedule && (
-                <span
-                  className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-bold uppercase ${schedule.holding ? "bg-amber-200 text-amber-900" : "bg-emerald-100 text-emerald-700"}`}
-                >
-                  {schedule.holding
-                    ? "Currently holding"
-                    : "Realtime delivery active"}
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                  <span
+                    className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-bold uppercase ${
+                      schedule.state === "ACTIVE"
+                        ? "bg-amber-200 text-amber-900"
+                        : schedule.state === "SCHEDULED"
+                          ? "bg-violet-100 text-violet-700"
+                          : schedule.state === "EXPIRED"
+                            ? "bg-slate-200 text-slate-700"
+                            : "bg-emerald-100 text-emerald-700"
+                    }`}
+                  >
+                    {schedule.state === "ACTIVE"
+                      ? "● Hold active"
+                      : schedule.state === "SCHEDULED"
+                        ? "● Hold scheduled"
+                        : schedule.state === "EXPIRED"
+                          ? "● Schedule expired — delivery active"
+                          : "● No hold — delivery active"}
+                  </span>
+                  {schedule.state === "SCHEDULED" && schedule.holdFrom && (
+                    <span className="text-[10px] font-semibold text-violet-700">
+                      Starts {new Date(schedule.holdFrom).toLocaleString()}
+                    </span>
+                  )}
+                  {schedule.state === "ACTIVE" && schedule.holdUntil && (
+                    <span className="text-[10px] font-semibold text-amber-800">
+                      Holding until {new Date(schedule.holdUntil).toLocaleString()}
+                    </span>
+                  )}
+                  {schedule.state === "EXPIRED" && schedule.holdUntil && (
+                    <span className="text-[10px] font-semibold text-slate-500">
+                      Ended {new Date(schedule.holdUntil).toLocaleString()}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
 
@@ -416,22 +481,12 @@ export default function Dashboard() {
                         {item.assignedToday}
                       </td>
                       <td className="px-4 py-3">
-                        <input
-                          defaultValue={item.dailyLeadLimit}
-                          type="number"
-                          min="0"
-                          max="1000"
-                          className="w-24 rounded-lg border border-slate-200 px-2 py-1.5"
-                          onBlur={(event) => {
-                            if (
-                              Number(event.target.value) !== item.dailyLeadLimit
-                            )
-                              void updateCapacity(
-                                item.userId,
-                                event.target.value,
-                              );
-                          }}
-                        />
+                        <button
+                          onClick={() => openCapacityModal(item)}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-300 hover:text-indigo-700"
+                        >
+                          {item.dailyLeadLimit} / day
+                        </button>
                       </td>
                       <td className="px-4 py-3 font-semibold text-indigo-700">
                         {item.remaining}
@@ -500,9 +555,9 @@ export default function Dashboard() {
                   </td>
                   <td className="px-5 py-3">{lead.source}</td>
                   <td className="px-5 py-3">
-                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold">
-                      {lead.status}
-                    </span>
+                     <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${statusStyles[lead.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>
+                        {String(lead.status || "NEW").replaceAll("_", " ")}
+                      </span>
                   </td>
                   <td className="px-5 py-3">
                     {lead.assignedTo?.name || "Unassigned"}
@@ -514,6 +569,42 @@ export default function Dashboard() {
           </table>
         </div>
       </section>
+
+      {capacityModal && (
+        <div className="fixed inset-0 z-[110] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-5">
+          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl sm:p-6">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Set daily lead limit</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {capacityModal.name} will receive a notification after this limit is saved.
+              </p>
+            </div>
+            <label className="mt-5 block text-xs font-semibold text-slate-700">
+              Automatic leads per day
+              <input
+                autoFocus
+                type="number"
+                min="0"
+                max="1000"
+                value={capacityValue}
+                onChange={(event) => setCapacityValue(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-3 text-lg font-semibold outline-none focus:border-indigo-500"
+              />
+            </label>
+            <div className="mt-4 rounded-xl bg-indigo-50 p-3 text-xs text-indigo-800">
+              Current limit: <b>{capacityModal.dailyLeadLimit}</b> · New limit: <b>{capacityValue || 0}</b>
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button onClick={() => setCapacityModal(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700">
+                Cancel
+              </button>
+              <button disabled={capacitySaving === capacityModal.userId} onClick={updateCapacity} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                {capacitySaving === capacityModal.userId ? "Saving..." : "Confirm & save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

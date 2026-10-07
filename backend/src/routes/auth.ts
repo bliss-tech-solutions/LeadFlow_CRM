@@ -58,6 +58,7 @@ r.post("/login", async (req, res) => {
       name: u.name,
       email: u.email,
       role: u.role,
+      profilePhotoUrl: u.profilePhotoUrl || null,
     },
   });
 });
@@ -66,8 +67,10 @@ r.post("/login", async (req, res) => {
  * GET /api/auth/me
  * Return the authenticated user when the route is protected by auth.
  */
-r.get("/me", auth, (req, res) => {
-  res.json({ user: req.user });
+r.get("/me", auth, async (req, res) => {
+  const user = await User.findById(req.user!.id).select("name email role isActive profilePhotoUrl").lean();
+  if (!user) return res.status(404).json({ message: "User not found" });
+  res.json({ user });
 });
 
 export default r;

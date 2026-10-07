@@ -53,6 +53,10 @@ export const requestLogger = (
 
     if (statusCode >= 500) {
       logger.error("API Request", logData);
+    } else if (statusCode === 401 || statusCode === 403) {
+      // Expected auth/permission responses are useful for diagnostics but
+      // should not look like server failures in production logs.
+      logger.info("API Request", { ...logData, status: "auth" });
     } else if (statusCode >= 400) {
       logger.warn("API Request", logData);
     } else {

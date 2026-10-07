@@ -23,6 +23,7 @@ import notificationRoutes from "./routes/notifications";
 import businessProjectRoutes from "./routes/businessProjects";
 import leadDeliveryRoutes from "./routes/leadDelivery";
 import { releaseHeldLeads } from "./services/leadDelivery.service";
+import { processFollowupReminders } from "./services/followupReminder.service";
 
 import { Request, Response, NextFunction } from "express";
 
@@ -45,9 +46,14 @@ app.set("io", io);
 // Security
 app.use(helmet());
 
+const allowedOrigins = env.FRONTEND_URL.split(",").map((value) => value.trim()).filter(Boolean);
+
 app.use(
   cors({
-    origin: env.FRONTEND_URL,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Origin is not allowed by CRM CORS policy"));
+    },
     credentials: true,
   }),
 );
@@ -147,6 +153,21 @@ connectDB()
 
       release();
       setInterval(release, 30_000);
+
+      const followupMaintenance = async () => {
+        try {
+          await processFollowupReminders(io);
+        } catch (error: any) {
+          logger.error("Follow-up maintenance failed", {
+            error: error?.message,
+          });
+        }
+      };
+
+      // Follow-up reminders run every minute. MongoDB's atomic claim
+      // (reminder24hSentAt) prevents duplicate reminders across instances.
+      void followupMaintenance();
+      setInterval(followupMaintenance, 60 * 1000);
     }),
   )
   .catch((err) => {

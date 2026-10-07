@@ -144,23 +144,21 @@ function fieldMap(fields: MetaField[]) {
  */
 export async function fetchMetaLeadDetails(
   leadgenId: string,
+  pageId?: string,
 ): Promise<any | null> {
   if (!leadgenId) {
     throw new Error("Meta leadgen_id is required");
   }
 
+  if (!env.META_ACCESS_TOKEN || !env.META_GRAPH_VERSION) {
+    throw new Error(
+      "Meta access token or Graph API version is not configured",
+    );
+  }
+
   let url = "";
 
-  if (env.META_LEAD_FETCH_URL) {
-    url = env.META_LEAD_FETCH_URL.replace(
-      ":leadgenId",
-      encodeURIComponent(leadgenId),
-    );
-  } else {
-    if (!env.META_ACCESS_TOKEN || !env.META_GRAPH_VERSION) {
-      return null;
-    }
-
+  if (env.META_LEAD_FETCH_URL && env.META_ACCESS_TOKEN) {
     const params = new URLSearchParams({
       fields: "id,created_time,field_data",
       access_token: env.META_ACCESS_TOKEN,
@@ -171,17 +169,50 @@ export async function fetchMetaLeadDetails(
     )}?${params.toString()}`;
   }
 
-  console.log(`[meta] fetching lead details for leadgen_id=${leadgenId}`);
+  console.log(
+    `[meta] fetching lead details` +
+      ` leadgen_id=${leadgenId}` +
+      `${pageId ? ` page_id=${pageId}` : ""}` +
+      ` graph=${env.META_GRAPH_VERSION}`,
+  );
 
   const response = await fetch(url);
 
-  if (!response.ok) {
-    const text = await response.text();
+  const responseText = await response.text();
 
-    throw new Error(`Meta lead retrieval failed: ${response.status} ${text}`);
+  let responseData: any = null;
+
+  try {
+    responseData = JSON.parse(responseText);
+  } catch {
+    responseData = null;
   }
 
-  return response.json();
+  if (!response.ok) {
+    console.error("[meta] lead retrieval failed", {
+      status: response.status,
+      leadgenId,
+      pageId,
+      graphVersion: env.META_GRAPH_VERSION,
+      error: responseData?.error ?? responseText,
+    });
+
+    throw new Error(
+      `Meta lead retrieval failed: ${response.status} ${responseText}`,
+    );
+  }
+
+  if (!responseData?.id) {
+    throw new Error(
+      `Meta returned an invalid lead response for leadgen_id=${leadgenId}`,
+    );
+  }
+
+  console.log(
+    `[meta] lead details fetched successfully leadgen_id=${leadgenId}`,
+  );
+
+  return responseData;
 }
 
 /**
@@ -386,7 +417,7 @@ export async function ingestMetaLead(
   if (!shouldHold) {
     const recipients = await User.find({
       isActive: true,
-      $or: [{ role: "ADMIN" }, ...(assignee ? [{ _id: assignee._id }] : [])],
+      $or: [{ role: { $in: ["ADMIN", "MANAGER"] } }, ...(assignee ? [{ _id: assignee._id }] : [])],
     }).select("_id");
 
     if (recipients.length) {
@@ -395,9 +426,7 @@ export async function ingestMetaLead(
           user: user._id,
           type: "NEW_LEAD",
           title: "New Meta lead",
-          message: assignee
-            ? `${lead.name} was received and assigned to ${assignee.name}.`
-            : `${lead.name} was received but is currently unassigned because automatic capacity is full.`,
+          message: `New lead received: ${lead.name || "Unknown lead"}${lead.phone ? ` · ${lead.phone}` : ""}${lead.email ? ` · ${lead.email}` : ""}${lead.source ? ` · Source: ${lead.source}` : ""}${lead.campaign ? ` · Campaign: ${lead.campaign}` : ""}${lead.formName ? ` · Form: ${lead.formName}` : ""}${project ? ` · Project: ${project.name}` : ""}.`,
           entityType: "Lead",
           entityId: lead.id,
         })),
@@ -413,11 +442,12 @@ export async function ingestMetaLead(
       io.to("role:ADMIN").emit("new_lead", { lead: lead.toObject() });
     }
 
-    if (assignee && io) {
-      console.log(`[realtime] emitting lead_assigned ${assignee.id}`);
-      io.to(`user:${assignee.id}`).emit("new_lead", {
-        lead: lead.toObject(),
-      });
+    if (io && assignee?._id) {
+      const assigneeId = String(assignee._id);
+      console.log(`[realtime] emitting new_lead user:${assigneeId}`);
+      io.to(`user:${assigneeId}`).emit("new_lead", { lead: lead.toObject() });
+    } else if (io) {
+      console.log(`[realtime] lead ${lead.id} has no salesperson assignment; only admin/manager notification sent`);
     }
   } else {
     console.log(`[meta] lead ${lead.id} held until the delivery window ends`);

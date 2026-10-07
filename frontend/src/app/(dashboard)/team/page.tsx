@@ -7,15 +7,13 @@ import { UserRound, ShieldCheck, Plus, X } from "lucide-react";
 
 export default function Team() {
   const [users, setUsers] = useState<any[]>([]);
-  const [leads, setLeads] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const current = getUser();
   async function load() {
-    const [u, l] = await Promise.all([api("/users"), api("/leads?limit=100")]);
+    const u = await api("/users");
     setUsers(u.users || []);
-    setLeads(l.leads || []);
   }
   useEffect(() => {
     load();
@@ -49,7 +47,7 @@ export default function Team() {
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {users.map((u) => {
-          const count = leads.filter((l) => l.assignedTo?._id === u._id).length;
+          const count = u.assignedLeadCount || 0;
           return (
             <div
               key={u._id}
