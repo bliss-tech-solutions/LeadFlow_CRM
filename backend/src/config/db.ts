@@ -1,23 +1,30 @@
 import mongoose from "mongoose";
 import { env } from "./env";
+import { logger } from "./logger";
 
-let cachedConnection: typeof mongoose | null = null;
+let connectionPromise: Promise<typeof mongoose> | null = null;
 
-export async function connectDB() {
-  try {
-    if (cachedConnection) return cachedConnection;
+/** Connect once per process. Startup must fail when MongoDB is unavailable. */
+export async function connectDB(): Promise<typeof mongoose> {
+  if (mongoose.connection.readyState === 1) return mongoose;
+  if (connectionPromise) return connectionPromise;
 
-    const dbUrl = env.MONGO_URI;
-    if (!dbUrl) throw new Error("MongoDB environment variable is not set");
-
-    cachedConnection = await mongoose.connect(dbUrl, {
-      dbName: env.MONGO_DB_NAME,
+  connectionPromise = mongoose.connect(env.MONGO_URI, {
+    dbName: env.MONGO_DB_NAME,
+    serverSelectionTimeoutMS: 10_000,
+    maxPoolSize: 20,
+    minPoolSize: 0,
+    autoIndex: env.NODE_ENV !== "production",
+  }).then((connection) => {
+    logger.info("MongoDB connected", { database: connection.connection.name });
+    return connection;
+  }).catch((error: unknown) => {
+    connectionPromise = null;
+    logger.error("MongoDB connection failed", {
+      error: error instanceof Error ? error.message : "Unknown database error",
     });
-    console.log(`MongoDB connected: ${mongoose.connection.name}`);
-    return cachedConnection;
-  } catch (error: any) {
-    console.log("MongoDB error: ", error);
-    cachedConnection = null;
     throw error;
-  }
+  });
+
+  return connectionPromise;
 }

@@ -41,7 +41,7 @@ async function canAccessProjectDocuments(req: any, projectId: string) {
  * List legacy document metadata attached directly to an accessible lead.
  */
 r.get("/lead/:leadId", auth, async (req, res) => {
-  if (!(await canAccessLeadDocuments(req, req.params.leadId))) {
+  if (!(await canAccessLeadDocuments(req, String(req.params.leadId)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to these documents" });
@@ -84,7 +84,7 @@ r.post("/lead/:leadId", auth, roles("ADMIN"), async (req, res) => {
  * List legacy project documents only when the project is related to the current user.
  */
 r.get("/project/:projectId", auth, async (req, res) => {
-  if (!(await canAccessProjectDocuments(req, req.params.projectId))) {
+  if (!(await canAccessProjectDocuments(req, String(req.params.projectId)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to these documents" });

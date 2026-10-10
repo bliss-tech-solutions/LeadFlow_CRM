@@ -27,7 +27,7 @@ import { processFollowupReminders } from "./services/followupReminder.service";
 
 import { Request, Response, NextFunction } from "express";
 
-const app = express();
+export const app = express();
 
 declare global {
   namespace Express {
@@ -63,7 +63,7 @@ app.use(
   express.json({
     limit: "1mb",
     verify: (req, _res, buffer) => {
-      req.rawBody = Buffer.from(buffer);
+      (req as Request).rawBody = Buffer.from(buffer);
     },
   }),
 );
@@ -110,26 +110,28 @@ app.use((_req, res) =>
 );
 
 // Error handler
-app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-  const user = (req as any).user;
+app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const error = err instanceof Error ? err : new Error("Unknown error");
+  const candidate = err as { statusCode?: number; status?: number; code?: string } | null;
+  const statusCode = candidate?.statusCode ?? candidate?.status ?? 500;
+  const user = req.user;
 
   logger.error("Unhandled API Error", {
     method: req.method,
     url: req.originalUrl,
-    statusCode: err?.statusCode || 500,
-    errorType: err?.name || "UnknownError",
-    errorCode: err?.code,
-    message: err?.message || "Internal server error",
-    stack: err?.stack,
-    userId: user?.id || user?._id,
+    statusCode,
+    errorType: error.name || "UnknownError",
+    errorCode: candidate?.code,
+    message: error.message || "Internal server error",
+    stack: error.stack,
+    userId: user?.id,
     userEmail: user?.email,
   });
 
-  res.status(err?.statusCode || 500).json({
-    message:
-      err?.statusCode && err.statusCode < 500
-        ? err.message
-        : "Internal server error",
+  res.status(statusCode >= 400 && statusCode <= 599 ? statusCode : 500).json({
+    message: statusCode >= 400 && statusCode < 500
+      ? error.message
+      : "Internal server error",
   });
 });
 
@@ -176,6 +178,22 @@ connectDB()
       stack: err?.stack,
     });
 
-    process.exit(1);
+    process.exitCode = 1;
   });
+
+const shutdown = (signal: string) => {
+  logger.info("Shutting down API server", { signal });
+  server.close(() => {
+    void import("mongoose").then(({ default: mongoose }) => mongoose.disconnect())
+      .catch((error: unknown) => {
+        logger.error("Error during MongoDB shutdown", {
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      })
+      .finally(() => process.exit(0));
+  });
+};
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
   

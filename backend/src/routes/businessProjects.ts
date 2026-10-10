@@ -100,7 +100,7 @@ r.get("/", auth, async (req, res) => {
  * Return a project only when the user is an admin or has an assigned lead for that project.
  */
 r.get("/:id", auth, async (req, res) => {
-  if (!(await canViewProject(req, req.params.id))) {
+  if (!(await canViewProject(req, String(req.params.id)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to this project" });
@@ -357,7 +357,7 @@ r.post("/:id/documents/presign", auth, roles("ADMIN"), async (req, res) => {
  * Return a short-lived S3 download URL for an authorized project document.
  */
 r.get("/:id/documents/:documentId/url", auth, async (req, res) => {
-  if (!(await canViewProject(req, req.params.id))) {
+  if (!(await canViewProject(req, String(req.params.id)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to this project document" });

@@ -165,7 +165,7 @@ r.get("/followups/all", auth, async (req, res) => {
  * Return one accessible lead plus activity, calls, follow-ups and project documents.
  */
 r.get("/:id", auth, async (req, res) => {
-  if (!(await canAccessLead(req, req.params.id))) {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to this lead" });
@@ -202,7 +202,7 @@ r.get("/:id", auth, async (req, res) => {
  * Change the status of an accessible lead and write the audit trail.
  */
 r.patch("/:id/status", auth, async (req, res) => {
-  if (!(await canAccessLead(req, req.params.id))) {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to this lead" });
@@ -319,7 +319,7 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
  * Record a call only against a lead visible to the current user.
  */
 r.post("/:id/calls", auth, async (req, res) => {
-  if (!(await canAccessLead(req, req.params.id))) {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to this lead" });
@@ -383,7 +383,7 @@ r.post("/:id/calls", auth, async (req, res) => {
  * Schedule a future follow-up for an accessible lead.
  */
 r.post("/:id/followups", auth, async (req, res) => {
-  if (!(await canAccessLead(req, req.params.id))) {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
     return res
       .status(403)
       .json({ message: "You do not have access to this lead" });
@@ -474,7 +474,7 @@ r.post("/:id/followups", auth, async (req, res) => {
     .populate("user", "name email role")
     .lean();
 
-  const notificationMessage = `${populatedFollowup?.lead && typeof populatedFollowup.lead === "object" ? populatedFollowup.lead.name : leadForFollowup.name || "Lead"} · ${f.type} follow-up scheduled for ${new Date(f.scheduledAt).toLocaleString()} for ${assignedUser.name}.`;
+  const notificationMessage = `${populatedFollowup?.lead && typeof populatedFollowup.lead === "object" ? (populatedFollowup.lead as unknown as { name?: string }).name : leadForFollowup.name || "Lead"} · ${f.type} follow-up scheduled for ${new Date(f.scheduledAt).toLocaleString()} for ${assignedUser.name}.`;
 
   await Notification.insertMany(
     recipients.map((user) => ({

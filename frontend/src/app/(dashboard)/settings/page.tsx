@@ -203,7 +203,7 @@ export default function SettingsPage() {
           <div className="min-w-0 flex-1">
             <b className="block text-sm text-slate-900">Profile photo</b>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              JPG, PNG · maximum 2 MB.
+              JPG, PNG · maximum 1 MB.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <input

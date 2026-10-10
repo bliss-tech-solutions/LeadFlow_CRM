@@ -135,7 +135,7 @@ async function getAccessibleFollowup(req: any, id: string) {
 }
 
 r.patch("/:id/complete", auth, async (req, res) => {
-  const followup = await getAccessibleFollowup(req, req.params.id);
+  const followup = await getAccessibleFollowup(req, String(req.params.id));
   if (!followup) return res.status(404).json({ message: "Follow-up not found" });
   if (followup.status !== "PENDING") {
     return res.status(409).json({ message: "Only pending follow-ups can be completed" });
@@ -170,7 +170,7 @@ r.patch("/:id/complete", auth, async (req, res) => {
 });
 
 r.patch("/:id/cancel", auth, async (req, res) => {
-  const followup = await getAccessibleFollowup(req, req.params.id);
+  const followup = await getAccessibleFollowup(req, String(req.params.id));
   if (!followup) return res.status(404).json({ message: "Follow-up not found" });
   if (followup.status !== "PENDING") {
     return res.status(409).json({ message: "Only pending follow-ups can be cancelled" });
@@ -205,7 +205,7 @@ r.patch("/:id/cancel", auth, async (req, res) => {
 });
 
 r.patch("/:id/reschedule", auth, async (req, res) => {
-  const oldFollowup = await getAccessibleFollowup(req, req.params.id);
+  const oldFollowup = await getAccessibleFollowup(req, String(req.params.id));
   if (!oldFollowup) return res.status(404).json({ message: "Follow-up not found" });
   if (oldFollowup.status !== "PENDING") {
     return res.status(409).json({ message: "Only pending follow-ups can be rescheduled" });
