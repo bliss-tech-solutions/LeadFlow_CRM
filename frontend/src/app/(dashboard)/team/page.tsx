@@ -4,6 +4,7 @@ import Topbar from "../../../components/Topbar";
 import { api } from "../../../lib/api";
 import { getUser } from "../../../lib/auth";
 import { UserRound, ShieldCheck, Plus, X } from "lucide-react";
+import Image from "next/image";
 
 export default function Team() {
   const [users, setUsers] = useState<any[]>([]);
@@ -54,9 +55,24 @@ export default function Team() {
               className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
             >
               <div className="flex items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-full bg-indigo-50 text-indigo-600">
-                  {u.name?.[0] || "U"}
-                </div>
+                {u?.profilePhotoUrl ? (
+                  <div className=" grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-800 text-xs font-bold text-white ">
+                    <Image
+                      src={u.profilePhotoUrl}
+                      alt={u.name}
+                      height={36}
+                      width={36}
+                      className="object-center object-cover w-11 h-11 shrink-0 place-items-center overflow-hidden rounded-full border-2 bg-indigo-50 border-indigo-600 shadow-sm"
+                    />
+                  </div>
+                ) : (
+                  <div
+                    title={u?.name || "User"}
+                    className="grid h-11 w-11 place-items-center rounded-full bg-indigo-50 text-indigo-600 "
+                  >
+                    {u?.name?.[0] || "U"}
+                  </div>
+                )}
                 <div className="min-w-0">
                   <h3 className="truncate font-semibold text-slate-900">
                     {u.name}

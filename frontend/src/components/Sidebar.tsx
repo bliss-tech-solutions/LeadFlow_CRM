@@ -13,6 +13,7 @@ import {
   Settings,
 } from "lucide-react";
 import { getUser, logout } from "../lib/auth";
+import Image from "next/image";
 
 export default function Sidebar() {
   const path = usePathname();
@@ -118,16 +119,28 @@ export default function Sidebar() {
           md:justify-start md:px-1
         "
       >
-        <div
-          title={user?.name || "User"}
-          className="
-            grid h-9 w-9 shrink-0 place-items-center
-            rounded-full bg-slate-800
-            text-xs font-bold text-white
-          "
-        >
-          {user?.name?.[0] || "U"}
-        </div>
+        {user?.profilePhotoUrl ? (
+          <div className=" grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-800 text-xs font-bold text-white ">
+            <Image
+              src={user.profilePhotoUrl}
+              alt={user.name}
+              height={36}
+              width={36}
+              className="object-center object-cover w-9 h-9 shrink-0 place-items-center overflow-hidden rounded-full border-2 bg-indigo-100 border-indigo-600 shadow-sm"
+            />
+          </div>
+        ) : (
+          <div
+            title={user?.name || "User"}
+            className="
+          grid h-9 w-9 shrink-0 place-items-center
+          rounded-full bg-slate-800
+          text-xs font-bold text-white
+        "
+          >
+            {user?.name?.[0] || "U"}
+          </div>
+        )}
 
         <div className="hidden min-w-0 flex-1 md:block">
           <b className="block truncate text-xs text-white">{user?.name}</b>
