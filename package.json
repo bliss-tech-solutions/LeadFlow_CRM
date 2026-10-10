@@ -2,12 +2,19 @@
   "name": "leadflow-crm",
   "private": true,
   "version": "1.0.0",
-  "workspaces": ["frontend", "backend"],
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "build": "npm run build -w backend && npm run build -w frontend",
     "seed": "npm run seed -w backend",
     "install:all": "npm install"
   },
-  "devDependencies": {"concurrently": "^9.2.1"}
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "concurrently": "^9.2.1"
+  }
 }
