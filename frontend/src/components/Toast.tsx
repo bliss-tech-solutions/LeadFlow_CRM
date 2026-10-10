@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -52,7 +53,10 @@ function followupPopup(payload: any): Popup | null {
     },
     FOLLOWUP_CANCELLED: {
       title: "Follow-up cancelled",
-      message: `${leadName} · ${followUp.cancellationReason || "The scheduled follow-up was cancelled."}`,
+      message: `${leadName} · ${
+        followUp.cancellationReason ||
+        "The scheduled follow-up was cancelled."
+      }`,
       tone: "rose",
     },
     FOLLOWUP_RESCHEDULED: {
@@ -82,12 +86,10 @@ function followupPopup(payload: any): Popup | null {
 
 export default function RealtimeToast() {
   const [popups, setPopups] = useState<Popup[]>([]);
-  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const timers = useRef<Map<string, number>>(new Map());
   const seenEvents = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
     const unlock = () => {
       unlockNotificationSound().catch(() => undefined);
     };
@@ -96,7 +98,10 @@ export default function RealtimeToast() {
       once: true,
       capture: true,
     });
-    window.addEventListener("keydown", unlock, { once: true, capture: true });
+    window.addEventListener("keydown", unlock, {
+      once: true,
+      capture: true,
+    });
 
     return () => {
       window.removeEventListener("pointerdown", unlock, true);
@@ -107,6 +112,7 @@ export default function RealtimeToast() {
   useEffect(() => {
     const user = getUser();
     const token = localStorage.getItem("leadflow_token");
+
     if (!user || !token) return;
 
     const addPopup = (popup: Popup | null) => {
@@ -116,7 +122,9 @@ export default function RealtimeToast() {
       void playNotificationSound();
 
       const timer = window.setTimeout(() => {
-        setPopups((current) => current.filter((item) => item.id !== popup.id));
+        setPopups((current) =>
+          current.filter((item) => item.id !== popup.id)
+        );
         timers.current.delete(popup.id);
       }, 8000);
 
@@ -126,31 +134,42 @@ export default function RealtimeToast() {
     const onNewLead = (payload: any) => {
       const lead = payload?.lead;
       if (!lead?._id) return;
+
       const key = `lead:${lead._id}:new`;
       if (seenEvents.current.has(key)) return;
       seenEvents.current.add(key);
+
       addPopup({
         id: `${key}-${Date.now()}`,
         kind: "LEAD",
         title: "New lead received",
-        message: `${lead.name || "New lead"}${lead.phone ? ` · ${lead.phone}` : ""}${lead.email ? ` · ${lead.email}` : ""} · ${lead.source || "META"}${lead.campaign ? ` · Campaign: ${lead.campaign}` : ""}${lead.formName ? ` · Form: ${lead.formName}` : ""}`,
+        message: `${lead.name || "New lead"}${
+          lead.phone ? ` · ${lead.phone}` : ""
+        }${lead.email ? ` · ${lead.email}` : ""} · ${
+          lead.source || "META"
+        }${lead.campaign ? ` · Campaign: ${lead.campaign}` : ""}${
+          lead.formName ? ` · Form: ${lead.formName}` : ""
+        }`,
         tone: "green",
       });
     };
-
 
     const onCallLogged = (payload: any) => {
       const lead = payload?.lead;
       const call = payload?.call;
       if (!lead?._id) return;
+
       const key = `call:${call?._id || lead._id}:${call?.result || "CALL"}`;
       if (seenEvents.current.has(key)) return;
       seenEvents.current.add(key);
+
       addPopup({
         id: `${key}-${Date.now()}`,
         kind: "CALL",
         title: "Call logged",
-        message: `${lead.name || "Lead"} · ${String(call?.result || "COMPLETED").replace(/_/g, " ")}${call?.notes ? ` · ${call.notes}` : ""}`,
+        message: `${lead.name || "Lead"} · ${String(
+          call?.result || "COMPLETED"
+        ).replace(/_/g, " ")}${call?.notes ? ` · ${call.notes}` : ""}`,
         tone: "blue",
       });
     };
@@ -158,21 +177,27 @@ export default function RealtimeToast() {
     const onFollowup = (payload: any) => {
       const popup = followupPopup(payload);
       if (!popup) return;
+
       const followUpId = payload?.followUp?._id || payload?.followUp?.id;
       const action = payload?.action || "UPDATED";
       const key = `followup:${followUpId}:${action}`;
+
       if (followUpId && seenEvents.current.has(key)) return;
       if (followUpId) seenEvents.current.add(key);
+
       addPopup(popup);
     };
 
     const onReminder = (payload: any) => {
       const popup = followupPopup({ ...payload, action: "REMINDER" });
       if (!popup) return;
+
       const followUpId = payload?.followUp?._id || payload?.followUp?.id;
       const key = `followup:${followUpId}:REMINDER`;
+
       if (followUpId && seenEvents.current.has(key)) return;
       if (followUpId) seenEvents.current.add(key);
+
       addPopup(popup);
     };
 
@@ -182,7 +207,11 @@ export default function RealtimeToast() {
     socket.on("followup_reminder", onReminder);
 
     const onSocketError = (error: Error) => {
-      if (/authentication failed|invalid|expired|unauthorized/i.test(error?.message || "")) {
+      if (
+        /authentication failed|invalid|expired|unauthorized/i.test(
+          error?.message || ""
+        )
+      ) {
         socket.disconnect();
         logout();
       }
@@ -203,16 +232,22 @@ export default function RealtimeToast() {
       socket.off("followup_updated", onFollowup);
       socket.off("followup_reminder", onReminder);
       socket.off("connect_error", onSocketError);
+
       window.removeEventListener("leadflow:logout", onLogout);
       socket.disconnect();
-      timers.current.forEach((timer) => clearTimeout(timer));
+
+      timers.current.forEach((timer) => window.clearTimeout(timer));
       timers.current.clear();
     };
   }, []);
 
   function dismiss(id: string) {
     const timer = timers.current.get(id);
-    if (timer) clearTimeout(timer);
+
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+    }
+
     timers.current.delete(id);
     setPopups((current) => current.filter((item) => item.id !== id));
   }
@@ -249,13 +284,16 @@ export default function RealtimeToast() {
           >
             {iconByKind(popup)}
           </div>
+
           <div className="min-w-0 flex-1">
             <b className="block text-sm text-slate-900">{popup.title}</b>
             <span className="mt-1 block text-xs leading-5 text-slate-600">
               {popup.message}
             </span>
           </div>
+
           <button
+            type="button"
             aria-label="Close notification"
             onClick={() => dismiss(popup.id)}
             className="self-start rounded-lg p-1 text-slate-400 hover:bg-slate-100"
