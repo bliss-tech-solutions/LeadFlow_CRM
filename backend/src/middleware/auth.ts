@@ -6,7 +6,10 @@ export type AuthUser = {
   id: string;
   name: string;
   email: string;
-  role: "ADMIN" | "MANAGER" | "SALES";
+  role: "ADMIN" | "MANAGER" | "SALES" | "BUSINESS";
+  business?: string;
+  assignedProjects?: string[];
+  businessProject?: string;
 };
 
 declare global {
@@ -31,6 +34,11 @@ export function auth(req: Request, res: Response, next: NextFunction) {
       name: String(decoded.name),
       email: String(decoded.email),
       role: decoded.role as AuthUser["role"],
+      business: decoded.business ? String(decoded.business) : undefined,
+      assignedProjects: Array.isArray(decoded.assignedProjects)
+        ? decoded.assignedProjects.map(String)
+        : undefined,
+      businessProject: decoded.businessProject ? String(decoded.businessProject) : undefined,
     };
     next();
   } catch {

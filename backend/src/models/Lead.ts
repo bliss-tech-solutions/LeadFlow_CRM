@@ -20,9 +20,12 @@ export interface ILead extends Document {
   metaLeadId?: string;
   meta?: {
     fieldData?: Array<{ name: string; values: string[] }>;
+    formData?: Record<string, unknown>;
     rawPayload?: Record<string, unknown>;
     businessId?: string;
     pageId?: string;
+    pageName?: string;
+    formName?: string;
     adAccountId?: string;
     campaignId?: string;
     adSetId?: string;
@@ -76,12 +79,18 @@ const schema = new Schema<ILead>(
         ],
         default: [],
       },
+      formData: {
+        type: Schema.Types.Mixed,
+        default: null,
+      },
       rawPayload: {
         type: Schema.Types.Mixed,
         default: null,
       },
       businessId: String,
       pageId: String,
+      pageName: String,
+      formName: String,
       adAccountId: String,
       campaignId: String,
       adSetId: String,

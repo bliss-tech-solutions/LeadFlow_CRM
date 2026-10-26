@@ -1,6 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { BusinessProject } from "../models/BusinessProject";
+import { Business } from "../models/Business";
 import { Lead } from "../models/Lead";
 import { User } from "../models/User";
 import { auth, roles } from "../middleware/auth";
@@ -27,19 +28,52 @@ const DOCUMENT_CATEGORIES = [
 const MAX_DOCUMENT_SIZE = 25 * 1024 * 1024;
 
 function isAdmin(req: any) {
-  return req.user?.role === "ADMIN";
+  return req.user?.role === "ADMIN" || req.user?.role === "MANAGER";
 }
 
 async function canViewProject(req: any, projectId: string) {
   if (isAdmin(req)) return true;
 
-  return Boolean(
-    await Lead.exists({
-      businessProject: projectId,
-      assignedTo: req.user!.id,
-      deliveryStatus: "RELEASED",
-    }),
-  );
+  const project = await BusinessProject.findById(projectId).select("business").lean();
+  if (!project) return false;
+
+  if (req.user?.role === "BUSINESS") {
+    if (req.user.business && String(project.business) === String(req.user.business)) return true;
+    if (String(req.user.businessProject) === String(projectId)) return true;
+    if (Array.isArray(req.user.assignedProjects) && req.user.assignedProjects.some((p: any) => String(p) === String(projectId))) return true;
+    return false;
+  }
+
+  if (req.user?.role === "SALES") {
+    if (Array.isArray(req.user.assignedProjects) && req.user.assignedProjects.some((p: any) => String(p) === String(projectId))) return true;
+    return Boolean(
+      await Lead.exists({
+        businessProject: projectId,
+        assignedTo: req.user!.id,
+        deliveryStatus: "RELEASED",
+      }),
+    );
+  }
+
+  return false;
+}
+
+async function canManageProjectDocuments(req: any, projectId: string) {
+  const project = await BusinessProject.findById(projectId).select("business stage").lean();
+  if (!project) return false;
+
+  // UPCOMING projects cannot have documents uploaded
+  if (project.stage === "UPCOMING") return false;
+
+  if (isAdmin(req)) return true;
+
+  if (req.user?.role === "BUSINESS") {
+    if (req.user.business && String(project.business) === String(req.user.business)) return true;
+    if (String(req.user.businessProject) === String(projectId)) return true;
+    if (Array.isArray(req.user.assignedProjects) && req.user.assignedProjects.some((p: any) => String(p) === String(projectId))) return true;
+  }
+
+  return false;
 }
 
 function getObjectUrl(key: string) {
@@ -51,39 +85,57 @@ function getObjectUrl(key: string) {
 
 /**
  * GET /api/business-projects
- * Admin sees every project; other authenticated users see only projects linked to their assigned leads.
+ * Admin sees every project; business partner sees their assigned project;
+ * sales users see projects linked to their assigned leads.
  */
 r.get("/", auth, async (req, res) => {
   const filter: Record<string, unknown> = { isActive: true };
 
-  if (!isAdmin(req)) {
-    const projectIds = await Lead.distinct("businessProject", {
+  const { business, stage, search = "", page = "1", limit = "10" } =
+    req.query as Record<string, string>;
+
+  if (business) {
+    filter.business = business;
+  }
+
+  if (stage && ["ONGOING", "UPCOMING", "COMPLETED"].includes(stage)) {
+    filter.stage = stage;
+  }
+
+  if (req.user?.role === "BUSINESS") {
+    if (req.user.business) {
+      filter.business = req.user.business;
+    } else if (req.user.businessProject) {
+      filter._id = req.user.businessProject;
+    }
+  } else if (!isAdmin(req)) {
+    const assignedIds = req.user && Array.isArray(req.user.assignedProjects) ? req.user.assignedProjects : [];
+    const leadProjectIds = await Lead.distinct("businessProject", {
       assignedTo: req.user!.id,
       deliveryStatus: "RELEASED",
       businessProject: { $exists: true },
     });
-
-    filter._id = { $in: projectIds };
+    const combined = Array.from(new Set([...assignedIds.map(String), ...leadProjectIds.map(String)]));
+    filter._id = { $in: combined };
   }
-
-  const { search = "", page = "1", limit = "10" } =
-    req.query as Record<string, string>;
 
   const normalizedSearch = String(search).trim();
   if (normalizedSearch) {
     filter.$or = [
       { name: { $regex: normalizedSearch, $options: "i" } },
       { developerGroup: { $regex: normalizedSearch, $options: "i" } },
+      { location: { $regex: normalizedSearch, $options: "i" } },
       { reraNumber: { $regex: normalizedSearch, $options: "i" } },
       { stage: { $regex: normalizedSearch, $options: "i" } },
     ];
   }
 
   const p = Math.max(1, Number(page) || 1);
-  const l = Math.min(50, Math.max(1, Number(limit) || 10));
+  const l = Math.min(100, Math.max(1, Number(limit) || 10));
 
   const [projects, total] = await Promise.all([
     BusinessProject.find(filter)
+      .populate("business", "name detail contactNo leadLimit leadLimitType")
       .populate("createdBy", "name")
       .sort({ updatedAt: -1 })
       .skip((p - 1) * l)
@@ -92,12 +144,12 @@ r.get("/", auth, async (req, res) => {
     BusinessProject.countDocuments(filter),
   ]);
 
-  res.json({ projects, total, page: p, pages: Math.ceil(total / l) });
+  res.json({ projects, total, page: p, pages: Math.ceil(total / l) || 1 });
 });
 
 /**
  * GET /api/business-projects/:id
- * Return a project only when the user is an admin or has an assigned lead for that project.
+ * Return a project only when authorized.
  */
 r.get("/:id", auth, async (req, res) => {
   if (!(await canViewProject(req, String(req.params.id)))) {
@@ -121,57 +173,109 @@ r.get("/:id", auth, async (req, res) => {
 
 /**
  * POST /api/business-projects
- * Admin creates a real-estate project using the setup wizard.
+ * Admin creates a real-estate project under a business.
  */
-r.post("/", auth, roles("ADMIN"), async (req, res) => {
+r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const body = req.body ?? {};
 
   if (!body.name?.trim()) {
-    return res.status(400).json({ message: "Business name is required" });
+    return res.status(400).json({ message: "Project name is required" });
   }
 
-  if (!body.stage) {
-    return res.status(400).json({ message: "Project stage is required" });
+  if (!body.stage || !["ONGOING", "UPCOMING", "COMPLETED"].includes(body.stage)) {
+    return res.status(400).json({ message: "Valid project stage (ONGOING, UPCOMING, COMPLETED) is required" });
   }
 
-  if (!Array.isArray(body.products) || !body.products.length) {
-    return res
-      .status(400)
-      .json({ message: "At least one product type is required" });
+  // Determine business
+  let businessId = body.business;
+  if (req.user?.role === "BUSINESS") {
+    businessId = req.user.business;
   }
 
-  if (!body.metaSetupSkipped) {
-    const invalidSource = (body.metaSources ?? []).some(
-      (source: any) => !source.pageId && !source.adId && !source.formId,
-    );
-
-    if (invalidSource) {
-      return res.status(400).json({
-        message: "Each Meta source needs at least a Page ID, Ad ID or Form ID",
+  if (!businessId) {
+    // If no business selected by admin, find or create default business
+    const defaultName = body.developerGroup?.trim() || "General Business Group";
+    let defaultBiz = await Business.findOne({ name: { $regex: "^" + defaultName + "$", $options: "i" } });
+    if (!defaultBiz) {
+      defaultBiz = await Business.create({
+        name: defaultName,
+        detail: "Auto-created business group",
+        contactNo: "",
+        createdBy: req.user!.id,
       });
     }
+    businessId = defaultBiz._id;
   }
 
-  const documents = (body.documents ?? []).map((document: any) => ({
-    ...document,
-    uploadedBy: req.user!.id,
-    isDemo: Boolean(document.isDemo),
-  }));
+  // Stage-specific rules
+  const stage = body.stage;
+  const location = body.location?.trim() || body.upcoming?.location?.trim() || body.completed?.location?.trim() || "";
+  
+  // COMPLETED always has RERA. ONGOING uses body.hasRera. UPCOMING has no RERA.
+  const hasRera = stage === "COMPLETED" ? true : (stage === "ONGOING" ? Boolean(body.hasRera) : false);
+  const reraNumber = hasRera ? (body.reraNumber?.trim() || "") : "";
+
+  // Products: Upcoming has NO products. Ongoing has products only if hasRera is true. Completed has products.
+  let products = Array.isArray(body.products) ? body.products : [];
+  if (stage === "UPCOMING" || (stage === "ONGOING" && !hasRera)) {
+    products = [];
+  } else {
+    products = products.map((p: any) => ({
+      type: p.type,
+      customType: p.customType || (p.type === "OTHER" ? "Custom Unit" : String(p.type).replace(/_/g, " ")),
+      priceRange: p.priceRange ? String(p.priceRange).trim() : "",
+      areaSqFt: p.areaSqFt ? String(p.areaSqFt).trim() : "",
+      units: Number(p.units) > 0 ? Number(p.units) : undefined,
+      isPenthouse: Boolean(p.isPenthouse),
+      details: p.details || {},
+    }));
+  }
+
+  // Documents: Upcoming CANNOT upload documents
+  let documents = Array.isArray(body.documents) ? body.documents : [];
+  if (stage === "UPCOMING") {
+    documents = [];
+  } else {
+    documents = documents.map((doc: any) => ({
+      name: doc.name,
+      url: doc.url,
+      category: doc.category || "BROCHURE",
+      mimeType: doc.mimeType,
+      size: doc.size,
+      description: doc.description,
+      uploadedBy: req.user!.id,
+      storageKey: doc.storageKey,
+      isDemo: Boolean(doc.isDemo),
+      createdAt: new Date(),
+    }));
+  }
 
   const project = await BusinessProject.create({
+    business: businessId,
     name: body.name.trim(),
-    stage: body.stage,
-    developerGroup: body.developerGroup,
-    reraNumber: body.reraNumber,
+    stage,
+    location,
+    developerGroup: body.developerGroup?.trim(),
+    hasRera,
+    reraNumber,
     penthouse: Boolean(body.penthouse),
-    products: body.products,
-    ongoing: body.ongoing,
-    upcoming: body.upcoming,
-    completed: body.completed,
-    metaSources: body.metaSources ?? [],
+    products,
+    upcoming: { location },
+    completed: { location },
+    ongoing: { details: {} },
+    metaSources: (Array.isArray(body.metaSources) ? body.metaSources : [])
+      .map((m: any) => ({
+        pageName: m.pageName ? String(m.pageName).trim() : "",
+        pageId: m.pageId ? String(m.pageId).trim() : "",
+        formName: m.formName ? String(m.formName).trim() : "",
+        formId: m.formId ? String(m.formId).trim() : "",
+      }))
+      .filter((m: any) => m.pageName || m.pageId || m.formName || m.formId),
     documents,
     metaSetupSkipped: Boolean(body.metaSetupSkipped),
     documentsSetupSkipped: Boolean(body.documentsSetupSkipped),
+    leadLimit: Math.max(0, Number(body.leadLimit) || 0),
+    leadLimitType: ["DAILY", "MONTHLY", "NONE"].includes(body.leadLimitType) ? body.leadLimitType : "NONE",
     createdBy: req.user!.id,
     updatedBy: req.user!.id,
   });
@@ -181,28 +285,88 @@ r.post("/", auth, roles("ADMIN"), async (req, res) => {
     action: "BUSINESS_PROJECT_CREATED",
     entity: "BusinessProject",
     entityId: project.id,
-    after: { name: project.name, stage: project.stage },
+    after: {
+      name: project.name,
+      stage: project.stage,
+      business: businessId,
+      productCount: project.products.length,
+      documentCount: project.documents.length,
+    },
     ip: req.ip,
   });
 
-  res.status(201).json({ project });
+  const populated = await BusinessProject.findById(project._id)
+    .populate("business", "name detail contactNo leadLimit leadLimitType")
+    .lean();
+
+  res.status(201).json({ project: populated });
+});
+
+/**
+ * PATCH /api/business-projects/:id/stage
+ * Promote or transition project stage (e.g. UPCOMING -> ONGOING or COMPLETED)
+ */
+r.patch("/:id/stage", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
+  const project = await BusinessProject.findById(req.params.id);
+  if (!project) return res.status(404).json({ message: "Project not found" });
+
+  if (req.user?.role === "BUSINESS" && String(project.business) !== String(req.user.business)) {
+    return res.status(403).json({ message: "Access denied to this project." });
+  }
+
+  const { stage, hasRera, reraNumber, products, location } = req.body;
+  if (!["ONGOING", "UPCOMING", "COMPLETED"].includes(stage)) {
+    return res.status(400).json({ message: "Valid stage is required (ONGOING, UPCOMING, COMPLETED)." });
+  }
+
+  const beforeStage = project.stage;
+  project.stage = stage;
+  if (hasRera !== undefined) project.hasRera = Boolean(hasRera);
+  if (reraNumber !== undefined) project.reraNumber = String(reraNumber).trim();
+  if (location !== undefined) project.location = String(location).trim();
+  if (Array.isArray(products)) project.products = products;
+
+  project.updatedBy = req.user!.id as any;
+  await project.save();
+
+  await logAudit({
+    actor: req.user!.id,
+    action: "PROJECT_STAGE_CHANGED",
+    entity: "BusinessProject",
+    entityId: project.id,
+    before: { stage: beforeStage },
+    after: { stage: project.stage },
+  });
+
+  const populated = await BusinessProject.findById(project._id)
+    .populate("business", "name detail contactNo")
+    .lean();
+
+  res.json({ project: populated });
 });
 
 /**
  * PATCH /api/business-projects/:id
- * Admin updates project details, Meta mappings and project settings.
+ * Admin updates the project configuration.
  */
-r.patch("/:id", auth, roles("ADMIN"), async (req, res) => {
+r.patch("/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const project = await BusinessProject.findById(req.params.id);
 
   if (!project) {
     return res.status(404).json({ message: "Business project not found" });
   }
 
+  if (req.user?.role === "BUSINESS" && String(project.business) !== String(req.user.business)) {
+    return res.status(403).json({ message: "Access denied." });
+  }
+
   const allowed = [
     "name",
+    "business",
     "stage",
+    "location",
     "developerGroup",
+    "hasRera",
     "reraNumber",
     "penthouse",
     "products",
@@ -210,15 +374,62 @@ r.patch("/:id", auth, roles("ADMIN"), async (req, res) => {
     "upcoming",
     "completed",
     "metaSources",
+    "leadLimit",
+    "leadLimitType",
     "metaSetupSkipped",
     "documentsSetupSkipped",
     "isActive",
   ];
 
   for (const key of allowed) {
-    if (key in (req.body ?? {})) {
+    if (key === "metaSources" && "metaSources" in (req.body ?? {})) {
+      project.metaSources = (Array.isArray(req.body.metaSources) ? req.body.metaSources : [])
+        .map((m: any) => ({
+          pageName: m.pageName ? String(m.pageName).trim() : "",
+          pageId: m.pageId ? String(m.pageId).trim() : "",
+          formName: m.formName ? String(m.formName).trim() : "",
+          formId: m.formId ? String(m.formId).trim() : "",
+        }))
+        .filter((m: any) => m.pageName || m.pageId || m.formName || m.formId);
+    } else if (key === "products" && "products" in (req.body ?? {})) {
+      const nextStage = req.body.stage !== undefined ? req.body.stage : project.stage;
+      const nextHasRera =
+        nextStage === "COMPLETED"
+          ? true
+          : nextStage === "ONGOING"
+            ? Boolean(req.body.hasRera !== undefined ? req.body.hasRera : project.hasRera)
+            : false;
+
+      if (nextStage === "UPCOMING" || (nextStage === "ONGOING" && !nextHasRera)) {
+        project.products = [] as any;
+      } else if (Array.isArray(req.body.products)) {
+        project.products = req.body.products.map((p: any) => ({
+          type: p.type,
+          customType:
+            p.customType ||
+            (p.type === "OTHER" ? "Custom Unit" : String(p.type).replace(/_/g, " ")),
+          priceRange: p.priceRange ? String(p.priceRange).trim() : "",
+          areaSqFt: p.areaSqFt ? String(p.areaSqFt).trim() : "",
+          units: Number(p.units) > 0 ? Number(p.units) : undefined,
+          isPenthouse: Boolean(p.isPenthouse),
+          details: p.details || {},
+        })) as any;
+      }
+    } else if (key in (req.body ?? {})) {
       (project as any)[key] = req.body[key];
     }
+  }
+
+  // Ensure stage consistency on patch
+  if (project.stage === "COMPLETED") {
+    project.hasRera = true;
+  } else if (project.stage === "UPCOMING") {
+    project.hasRera = false;
+    project.reraNumber = "";
+    project.products = [] as any;
+  } else if (project.stage === "ONGOING" && !project.hasRera) {
+    project.reraNumber = "";
+    project.products = [] as any;
   }
 
   project.updatedBy = req.user!.id as any;
@@ -261,9 +472,16 @@ r.post("/uploads/presign", auth, roles("ADMIN"), async (req, res) => {
 
 /**
  * POST /api/business-projects/:id/documents
- * Save metadata after the browser successfully uploads the selected file to S3.
+ * Save metadata after uploading a document to S3.
+ * Authorized for Admin, Manager, and the Business Partner assigned to this project.
  */
-r.post("/:id/documents", auth, roles("ADMIN"), async (req, res) => {
+r.post("/:id/documents", auth, async (req, res) => {
+  if (!(await canManageProjectDocuments(req, String(req.params.id)))) {
+    return res
+      .status(403)
+      .json({ message: "You do not have permission to manage documents for this project" });
+  }
+
   const project = await BusinessProject.findById(req.params.id);
 
   if (!project) {
@@ -317,8 +535,15 @@ r.post("/:id/documents", auth, roles("ADMIN"), async (req, res) => {
 /**
  * POST /api/business-projects/:id/documents/presign
  * Create a short-lived S3 upload URL for an existing project document.
+ * Authorized for Admin, Manager, and the Business Partner assigned to this project.
  */
-r.post("/:id/documents/presign", auth, roles("ADMIN"), async (req, res) => {
+r.post("/:id/documents/presign", auth, async (req, res) => {
+  if (!(await canManageProjectDocuments(req, String(req.params.id)))) {
+    return res
+      .status(403)
+      .json({ message: "You do not have permission to upload documents for this project" });
+  }
+
   const project = await BusinessProject.findById(req.params.id).select("_id");
 
   if (!project) {
@@ -389,13 +614,18 @@ r.get("/:id/documents/:documentId/url", auth, async (req, res) => {
 
 /**
  * DELETE /api/business-projects/:id/documents/:documentId
- * Admin deletes the document from S3 and removes its project metadata.
+ * Admin, Manager, or assigned Business Partner deletes the document from S3 and removes its metadata.
  */
 r.delete(
   "/:id/documents/:documentId",
   auth,
-  roles("ADMIN"),
   async (req, res) => {
+    if (!(await canManageProjectDocuments(req, String(req.params.id)))) {
+      return res
+        .status(403)
+        .json({ message: "You do not have permission to delete documents for this project" });
+    }
+
     const project = await BusinessProject.findById(req.params.id);
 
     if (!project) {
@@ -486,7 +716,6 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   }
 
   if (leads.length) {
-
     const io = req.app.get("io");
     if (io) {
       io.to("role:ADMIN").emit("leads_assigned", {

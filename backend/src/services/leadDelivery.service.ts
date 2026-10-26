@@ -1,6 +1,9 @@
+import { Types } from "mongoose";
 import { LeadDeliverySchedule } from "../models/LeadDeliverySchedule";
 import { Lead } from "../models/Lead";
 import { User } from "../models/User";
+import { Business } from "../models/Business";
+import { BusinessProject } from "../models/BusinessProject";
 import { Notification } from "../models/Notification";
 import { logActivity } from "../utils/activity";
 
@@ -182,55 +185,150 @@ export async function getSalesCapacity(timezone = "Asia/Kolkata") {
     role: "SALES",
     isActive: true,
   })
-    .select("_id name email dailyLeadLimit autoLeadCount autoLeadCountDate")
+    .select("_id name email autoLeadCount autoLeadCountDate")
     .sort({ name: 1 })
     .lean();
 
   return users.map((user) => {
     const assignedToday =
       user.autoLeadCountDate === dateKey ? Number(user.autoLeadCount || 0) : 0;
-    const limit = Math.max(0, Number(user.dailyLeadLimit ?? 5));
 
     return {
       userId: String(user._id),
       name: user.name,
       email: user.email,
-      dailyLeadLimit: limit,
       assignedToday,
-      remaining: Math.max(0, limit - assignedToday),
-      atCapacity: assignedToday >= limit,
     };
   });
 }
 
 /**
- * Atomically claim one available salesperson for an automatic lead assignment.
- * Manual assignments never use or consume this capacity.
+ * Check whether a project or its business has exceeded its daily or monthly lead quota.
  */
-export async function chooseRandomSalesperson() {
+export async function isLeadLimitReached(projectId?: string | Types.ObjectId): Promise<{ reached: boolean; reason?: string }> {
+  if (!projectId) return { reached: false };
+
+  const project = await BusinessProject.findById(projectId).select("business leadLimit leadLimitType").lean();
+  if (!project) return { reached: false };
+
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // 1. Check project-level limit
+  if (project.leadLimit && project.leadLimit > 0 && project.leadLimitType !== "NONE") {
+    const since = project.leadLimitType === "DAILY" ? startOfDay : startOfMonth;
+    const count = await Lead.countDocuments({
+      businessProject: project._id,
+      createdAt: { $gte: since },
+    });
+    if (count >= project.leadLimit) {
+      return {
+        reached: true,
+        reason: `Project lead limit reached (${count}/${project.leadLimit} ${project.leadLimitType.toLowerCase()})`,
+      };
+    }
+  }
+
+  // 2. Check business-level limit
+  if (project.business) {
+    const business = await Business.findById(project.business).select("leadLimit leadLimitType").lean();
+    if (business && business.leadLimit && business.leadLimit > 0 && business.leadLimitType !== "NONE") {
+      const since = business.leadLimitType === "DAILY" ? startOfDay : startOfMonth;
+      const projects = await BusinessProject.find({ business: business._id }).select("_id").lean();
+      const pIds = projects.map((p) => p._id);
+      const count = await Lead.countDocuments({
+        businessProject: { $in: pIds },
+        createdAt: { $gte: since },
+      });
+      if (count >= business.leadLimit) {
+        return {
+          reached: true,
+          reason: `Business lead limit reached (${count}/${business.leadLimit} ${business.leadLimitType.toLowerCase()})`,
+        };
+      }
+    }
+  }
+
+  return { reached: false };
+}
+
+/**
+ * Atomically claim one available salesperson for an automatic lead assignment.
+ * If projectId is provided, prioritizes salespeople assigned to that specific project.
+ */
+export async function chooseRandomSalesperson(projectId?: string | Types.ObjectId) {
   const dateKey = await refreshDailyCounters();
 
-  const candidates = await User.aggregate([
+  let projectObjId: Types.ObjectId | null = null;
+  if (projectId) {
+    try {
+      projectObjId = typeof projectId === "string" ? new Types.ObjectId(projectId) : (projectId as Types.ObjectId);
+    } catch {
+      projectObjId = null;
+    }
+  }
+
+  // 1. If project specified, first look for salespeople assigned to this project
+  if (projectObjId) {
+    const projectCandidates = await User.aggregate([
+      {
+        $match: {
+          role: "SALES",
+          isActive: true,
+          autoLeadCountDate: dateKey,
+          assignedProjects: projectObjId,
+        },
+      },
+      { $project: { _id: 1 } },
+    ]);
+
+    if (projectCandidates.length > 0) {
+      const ids = projectCandidates.map((candidate) => candidate._id);
+      for (let index = ids.length - 1; index > 0; index -= 1) {
+        const randomIndex = Math.floor(Math.random() * (index + 1));
+        [ids[index], ids[randomIndex]] = [ids[randomIndex], ids[index]];
+      }
+
+      for (const id of ids) {
+        const claimed = await User.findOneAndUpdate(
+          {
+            _id: id,
+            role: "SALES",
+            isActive: true,
+            autoLeadCountDate: dateKey,
+          },
+          {
+            $inc: { autoLeadCount: 1 },
+          },
+          {
+            new: true,
+          },
+        )
+          .select("_id name email")
+          .lean();
+
+        if (claimed) return claimed;
+      }
+    }
+  }
+
+  // 2. Fallback: general salespeople with unassigned / empty projects
+  const generalCandidates = await User.aggregate([
     {
       $match: {
         role: "SALES",
         isActive: true,
         autoLeadCountDate: dateKey,
-      },
-    },
-    {
-      $match: {
-        $expr: {
-          $lt: ["$autoLeadCount", "$dailyLeadLimit"],
-        },
+        ...(projectObjId ? { assignedProjects: { $size: 0 } } : {}),
       },
     },
     { $project: { _id: 1 } },
   ]);
 
-  if (!candidates.length) return null;
+  if (!generalCandidates.length) return null;
 
-  const ids = candidates.map((candidate) => candidate._id);
+  const ids = generalCandidates.map((candidate) => candidate._id);
 
   for (let index = ids.length - 1; index > 0; index -= 1) {
     const randomIndex = Math.floor(Math.random() * (index + 1));
@@ -244,9 +342,6 @@ export async function chooseRandomSalesperson() {
         role: "SALES",
         isActive: true,
         autoLeadCountDate: dateKey,
-        $expr: {
-          $lt: ["$autoLeadCount", "$dailyLeadLimit"],
-        },
       },
       {
         $inc: { autoLeadCount: 1 },
@@ -255,7 +350,7 @@ export async function chooseRandomSalesperson() {
         new: true,
       },
     )
-      .select("_id name email dailyLeadLimit")
+      .select("_id name email")
       .lean();
 
     if (claimed) return claimed;
@@ -296,7 +391,11 @@ export async function releaseHeldLeads(io: any) {
   let waitingForCapacity = false;
 
   for (const lead of leads) {
-    const assignee = await chooseRandomSalesperson();
+    const limitCheck = await isLeadLimitReached(lead.businessProject);
+    if (limitCheck.reached) {
+      continue;
+    }
+    const assignee = await chooseRandomSalesperson(lead.businessProject);
 
     if (!assignee) {
       waitingForCapacity = true;

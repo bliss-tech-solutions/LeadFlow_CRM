@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  allowedDevOrigins: ["http://localhost:4000"],
+  allowedDevOrigins: [
+    "localhost:3000",
+    "localhost:4000"
+  ],
+  experimental: {
+    cpus: 1,
+  },
   images: {
     remotePatterns: [
       {
@@ -13,4 +20,5 @@ const nextConfig: NextConfig = {
     ],
   },
 };
+
 export default nextConfig;

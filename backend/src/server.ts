@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 
 import { connectDB } from "./config/db";
+import { migrateBusinesses } from "./config/migrateBusinesses";
 import { env } from "./config/env";
 import { setupSocket } from "./sockets";
 
@@ -19,7 +20,9 @@ import followupRoutes from "./routes/followups";
 import documentRoutes from "./routes/documents";
 import auditRoutes from "./routes/audit";
 import metaRoutes from "./routes/meta";
+import leadSyncRoutes from "./routes/leadsync";
 import notificationRoutes from "./routes/notifications";
+import businessRoutes from "./routes/businesses";
 import businessProjectRoutes from "./routes/businessProjects";
 import leadDeliveryRoutes from "./routes/leadDelivery";
 import { releaseHeldLeads } from "./services/leadDelivery.service";
@@ -46,15 +49,37 @@ app.set("io", io);
 // Security
 app.use(helmet());
 
-const allowedOrigins = env.FRONTEND_URL.split(",").map((value) => value.trim()).filter(Boolean);
+const defaultAllowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:4000",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:4000",
+];
+
+const envOrigins = (env.FRONTEND_URL || "")
+  .split(",")
+  .map((o) => o.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envOrigins]));
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("Origin is not allowed by CRM CORS policy"));
+      if (!origin) return callback(null, true);
+      const cleanOrigin = origin.trim().replace(/\/$/, "");
+      if (
+        allowedOrigins.includes(cleanOrigin) ||
+        cleanOrigin.endsWith(".trycloudflare.com")
+      ) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Origin ${origin} is not allowed by CRM CORS policy`));
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
   }),
 );
 
@@ -72,9 +97,10 @@ app.use(
 app.use(
   rateLimit({
     windowMs: 60_000,
-    max: 300,
+    max: process.env.NODE_ENV === "production" ? 1000 : 3000,
     standardHeaders: true,
     legacyHeaders: false,
+    message: { message: "Too many requests. Please wait a moment and try again." },
   }),
 );
 
@@ -98,7 +124,9 @@ app.use("/api/followups", followupRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/meta", metaRoutes);
+app.use("/api/leadsync", leadSyncRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/businesses", businessRoutes);
 app.use("/api/business-projects", businessProjectRoutes);
 app.use("/api/lead-delivery", leadDeliveryRoutes);
 
@@ -137,7 +165,8 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
 
 // Start server
 connectDB()
-  .then(() =>
+  .then(async () => {
+    await migrateBusinesses();
     server.listen(env.PORT, () => {
       logger.info("API server started", {
         port: env.PORT,
@@ -170,8 +199,8 @@ connectDB()
       // (reminder24hSentAt) prevents duplicate reminders across instances.
       void followupMaintenance();
       setInterval(followupMaintenance, 60 * 1000);
-    }),
-  )
+    });
+  })
   .catch((err) => {
     logger.error("Failed to start API server", {
       error: err?.message,

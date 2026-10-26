@@ -7,6 +7,7 @@ import {
   Trash2,
   Volume2,
   VolumeX,
+  Menu,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
@@ -15,6 +16,7 @@ import {
   isNotificationSoundEnabled,
   unlockNotificationSound,
 } from "../lib/notificationSound";
+import { useNav } from "../lib/nav";
 
 type NotificationItem = {
   _id: string;
@@ -37,6 +39,7 @@ export default function Topbar({
   const [unread, setUnread] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const { setMobileOpen } = useNav();
 
   async function loadNotifications() {
     try {
@@ -109,26 +112,32 @@ export default function Topbar({
   }
 
   return (
-    <header className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          {title}
-        </h1>
-        {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
+    <header className="mb-4 sm:mb-5 flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open navigation menu"
+          className="grid h-9 w-9 sm:h-10 sm:w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 md:hidden transition"
+        >
+          <Menu size={18} />
+        </button>
+
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg sm:text-2xl font-bold tracking-tight text-slate-900 truncate">
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="hidden md:block mt-0.5 text-xs sm:text-sm text-slate-500 truncate">
+              {subtitle}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-3">
-        <div className="hidden h-10 w-64 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-slate-400 shadow-sm sm:flex">
-          <Search size={16} />
-          <input
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
-            placeholder="Search CRM..."
-            className="w-full bg-transparent text-sm outline-none"
-          />
-        </div>
-
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         <button
+          type="button"
           onClick={enableSound}
           title={
             soundEnabled
@@ -140,7 +149,7 @@ export default function Topbar({
               ? "Notification sound enabled"
               : "Enable notification sound"
           }
-          className={`grid h-10 w-10 place-items-center rounded-xl border shadow-sm ${
+          className={`grid h-10 w-10 place-items-center rounded-xl border shadow-sm transition ${
             soundEnabled
               ? "border-emerald-200 bg-emerald-50 text-emerald-600"
               : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -151,13 +160,16 @@ export default function Topbar({
 
         <div ref={panelRef} className="relative">
           <button
+            type="button"
             onClick={() => setOpen((value) => !value)}
             aria-label="Notifications"
-            className="relative grid h-10 w-10 place-items-center rounded-xl border border-blue-200 bg-blue-50 text-slate-600 shadow-sm hover:bg-slate-50"
+            className="relative grid h-10 w-10 place-items-center rounded-xl border border-blue-200 bg-blue-50 text-slate-600 shadow-sm hover:bg-blue-100/60 transition"
           >
-            <Bell size={18}  className="text-blue-500"/>
+            <Bell size={18} className="text-blue-500" />
             {unread > 0 && (
-              <span className="absolute flex items-center justify-center -right-2 font-semibold text-xs -top-2 w-6 h-6  rounded-full bg-blue-300">{unread> 10 ? "10+" : unread}</span>
+              <span className="absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                {unread > 10 ? "10+" : unread}
+              </span>
             )}
           </button>
 
@@ -165,7 +177,7 @@ export default function Topbar({
             <div className="absolute right-0 top-12 z-50 w-[min(380px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
                 <div>
-                  <b className="block text-sm">Notifications</b>
+                  <b className="block text-sm text-slate-900">Notifications</b>
                   <span className="text-xs text-slate-500">
                     {unread} unread
                   </span>

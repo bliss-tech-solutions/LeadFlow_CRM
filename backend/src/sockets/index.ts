@@ -28,14 +28,36 @@ function authenticateSocket(socket: any): SocketUser | null {
  * Create the realtime server and place each user into only their authorized rooms.
  */
 export function setupSocket(httpServer: any) {
-  const allowedOrigins = env.FRONTEND_URL.split(",")
-    .map((value) => value.trim())
+  const defaultAllowedOrigins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:4000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:4000",
+  ];
+
+  const envOrigins = (env.FRONTEND_URL || "")
+    .split(",")
+    .map((value) => value.trim().replace(/\/$/, ""))
     .filter(Boolean);
+
+  const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envOrigins]));
 
   const io = new Server(httpServer, {
     cors: {
-      origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
+      origin: (origin: any, callback: any) => {
+        if (!origin) return callback(null, true);
+        const cleanOrigin = String(origin).trim().replace(/\/$/, "");
+        if (
+          allowedOrigins.includes(cleanOrigin) ||
+          cleanOrigin.endsWith(".trycloudflare.com")
+        ) {
+          return callback(null, true);
+        }
+        return callback(new Error("Socket CORS rejected: " + origin), false);
+      },
       credentials: true,
+      methods: ["GET", "POST"],
     },
     transports: ["websocket", "polling"],
   });

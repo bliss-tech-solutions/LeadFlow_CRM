@@ -17,6 +17,7 @@ import {
   MessageSquare,
   ExternalLink,
   Building2,
+  Download,
 } from "lucide-react";
 
 const callResults = [
@@ -56,17 +57,148 @@ function todayString() {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 10);
 }
+const EXCLUDED_FORM_KEYS = new Set([
+  // System IDs / metadata to never show as form questions
+  "lead_id",
+  "leadgen_id",
+  "id",
+  "page_id",
+  "page_name",
+  "form_id",
+  "form_name",
+  "ad_id",
+  "ad_name",
+  "adset_id",
+  "ad_set_id",
+  "adset_name",
+  "ad_set_name",
+  "adgroup_id",
+  "campaign_id",
+  "campaign_name",
+  "campaign",
+  "ad_account_id",
+  "ad_account_name",
+  "account_id",
+  "created_at",
+  "created_time",
+  "platform",
+  "is_organic",
+  "retailer_item_id",
+  "form_data",
+  "raw_body",
+]);
+
+const CONTACT_KEYS = new Set([
+  "full_name",
+  "name",
+  "first_name",
+  "last_name",
+  "email",
+  "phone",
+  "phone_number",
+  "contact",
+  "phone_no",
+  "mobile",
+  "mobile_number",
+]);
+
+function formatQuestionKey(key: string): string {
+  const cleaned = key.replace(/_/g, " ").trim();
+  if (!cleaned) return key;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function formatResponseValue(val: any): string {
+  if (val === null || val === undefined) return "";
+  let str = "";
+  if (Array.isArray(val)) {
+    str = val
+      .filter((v) => v !== null && v !== undefined && String(v).trim() !== "")
+      .map(String)
+      .join(", ");
+  } else if (typeof val === "object") {
+    str = JSON.stringify(val);
+  } else {
+    str = String(val);
+  }
+  str = str.trim();
+  if (!str || str.startsWith("{{") || str.toLowerCase() === "null") return "";
+  if (str.includes("_") && !str.startsWith("http")) {
+    str = str.replace(/_/g, " ");
+  }
+  return str;
+}
+
+function getAllFormFields(lead: any): Array<{ name: string; value: string }> {
+  const result: Array<{ name: string; value: string }> = [];
+  const seenKeys = new Set<string>();
+
+  // 1. Add standard contact fields first (if present and valid)
+  const nameVal = formatResponseValue(lead?.name);
+  if (nameVal) {
+    result.push({ name: "Full name", value: nameVal });
+    CONTACT_KEYS.forEach((k) => seenKeys.add(k));
+  }
+
+  const emailVal = formatResponseValue(lead?.email);
+  if (emailVal) {
+    result.push({ name: "Email", value: emailVal });
+    seenKeys.add("email");
+  }
+
+  const phoneVal = formatResponseValue(lead?.phone);
+  if (phoneVal) {
+    result.push({ name: "Phone number", value: phoneVal });
+    seenKeys.add("phone");
+    seenKeys.add("phone_number");
+  }
+
+  // 2. Extra form fields from formData
+  const formData =
+    lead?.meta?.formData ||
+    lead?.meta?.rawPayload?.form_data ||
+    lead?.meta?.rawPayload?.entry?.[0]?.changes?.[0]?.value?.form_data;
+
+  if (formData && typeof formData === "object") {
+    for (const [rawKey, rawVal] of Object.entries(formData)) {
+      const lowerKey = rawKey.trim().toLowerCase();
+      if (EXCLUDED_FORM_KEYS.has(lowerKey) || seenKeys.has(lowerKey)) continue;
+
+      const formattedVal = formatResponseValue(rawVal);
+      if (!formattedVal) continue;
+
+      seenKeys.add(lowerKey);
+      result.push({
+        name: formatQuestionKey(rawKey),
+        value: formattedVal,
+      });
+    }
+  }
+
+  // 3. Extra form fields from fieldData
+  if (Array.isArray(lead?.meta?.fieldData)) {
+    for (const item of lead.meta.fieldData) {
+      if (!item?.name) continue;
+      const rawKey = String(item.name);
+      const lowerKey = rawKey.trim().toLowerCase();
+      if (EXCLUDED_FORM_KEYS.has(lowerKey) || seenKeys.has(lowerKey)) continue;
+
+      const formattedVal = formatResponseValue(item.values);
+      if (!formattedVal) continue;
+
+      seenKeys.add(lowerKey);
+      result.push({
+        name: formatQuestionKey(rawKey),
+        value: formattedVal,
+      });
+    }
+  }
+
+  return result;
+}
+
 function fieldEntries(lead: any) {
-  return Array.isArray(lead?.meta?.fieldData)
-    ? lead.meta.fieldData
-        .filter((x: any) => x?.name)
-        .map((x: any) => ({
-          name: String(x.name).replaceAll("_", " "),
-          value: Array.isArray(x.values)
-            ? x.values.join(", ")
-            : String(x.values ?? ""),
-        }))
-    : [];
+  return getAllFormFields(lead);
 }
 
 export default function LeadDetail() {
@@ -157,6 +289,49 @@ export default function LeadDetail() {
       setError(e?.message || "Unable to save change");
     }
   }
+
+  function downloadTransparencyTimeline() {
+    if (!data?.activities || !data?.lead) return;
+    const l = data.lead;
+    const lines: string[] = [];
+    lines.push("================================================================");
+    lines.push("LEAD FLOW CRM - TRANSPARENCY AUDIT TIMELINE");
+    lines.push("================================================================");
+    lines.push(`Generated: ${new Date().toLocaleString()}`);
+    lines.push(`Lead Name: ${l.name || "N/A"}`);
+    lines.push(`Phone: ${l.phone || "N/A"}`);
+    lines.push(`Email: ${l.email || "N/A"}`);
+    lines.push(`Status: ${l.status || "N/A"}`);
+    lines.push(`Assigned Sales Rep: ${l.assignedTo?.name || "Unassigned"}`);
+    if (l.businessProject) {
+      lines.push(`Project: ${l.businessProject.name || "N/A"} (${l.businessProject.stage || "N/A"})`);
+      if (l.businessProject.business?.name) lines.push(`Business Group: ${l.businessProject.business.name}`);
+      if (l.businessProject.reraNumber) lines.push(`RERA: ${l.businessProject.reraNumber}`);
+    }
+    lines.push(`Total Recorded Events: ${data.activities.length}`);
+    lines.push("================================================================\n");
+    lines.push("EVENT HISTORY (Chronological):");
+    lines.push("----------------------------------------------------------------");
+
+    data.activities.forEach((act: any, idx: number) => {
+      lines.push(`[#${idx + 1}] ${new Date(act.createdAt).toLocaleString()} | Actor: ${act.actor?.name || "System"}`);
+      lines.push(`Title: ${act.title}`);
+      if (act.description) lines.push(`Details: ${act.description}`);
+      lines.push("----------------------------------------------------------------");
+    });
+
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const safeName = (l.name || "lead").replace(/[^a-zA-Z0-9_-]/g, "_");
+    a.download = `${safeName}_transparency_timeline_${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   if (!data)
     return (
       <div>
@@ -167,7 +342,7 @@ export default function LeadDetail() {
       </div>
     );
   const lead = data.lead;
-  const fields = fieldEntries(lead);
+  const fields = getAllFormFields(lead);
   const project = lead.businessProject;
   return (
     <div className="space-y-5">
@@ -175,6 +350,30 @@ export default function LeadDetail() {
         title="Lead detail"
         subtitle="Contact information, source mapping, project documents and transparent activity history."
       />
+      {(!lead.assignedTo || !lead.assignedTo?._id) && currentUser?.role === "ADMIN" && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
+              <UserRound size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-amber-900">
+                Action Required: This lead is currently unassigned
+              </h3>
+              <p className="text-xs text-amber-700">
+                This lead has not been assigned to any salesperson yet. Assign it to a salesperson for immediate follow-up.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setModal("assign")}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-amber-700"
+          >
+            <UserRound size={14} /> Assign Lead Now
+          </button>
+        </div>
+      )}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.5fr)_380px]">
         <div className="space-y-5">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -243,7 +442,7 @@ export default function LeadDetail() {
                 </button>
               )}
             </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-5 grid gap-3 grid-cols-2 sm:grid-cols-2 lg:grid-cols-3">
               {[
                 ["Owner", lead.assignedTo?.name || "Unassigned"],
                 ["Score", `${lead.score}/100`],
@@ -286,73 +485,89 @@ export default function LeadDetail() {
                 {(project.products || []).map((product: any, index: number) => (
                   <div
                     key={index}
-                    className="rounded-xl border border-slate-100 bg-white p-4"
+                    className="rounded-xl border border-slate-100 bg-white p-4 space-y-2.5 shadow-xs"
                   >
-                    <b className="text-sm text-slate-900">
-                      {product.customType || product.type}
-                    </b>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      {Object.entries(product.details || {}).map(
-                        ([key, value]) => (
-                          <div key={key}>
-                            <span className="text-[10px] font-semibold uppercase text-slate-400">
-                              {key}
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <b className="text-sm font-bold text-slate-900">
+                            {product.customType || product.type}
+                          </b>
+                          {product.isPenthouse && (
+                            <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-extrabold text-purple-700">
+                              👑 Penthouse
                             </span>
-                            <p className="break-words text-xs text-slate-700">
-                              {String(value) || "—"}
-                            </p>
-                          </div>
-                        ),
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 uppercase font-semibold">Product Specification</span>
+                      </div>
+                      {product.priceRange && (
+                        <span className="rounded-lg bg-indigo-50 border border-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-700">
+                          {product.priceRange}
+                        </span>
                       )}
                     </div>
+
+                    {(product.areaSqFt || product.units) && (
+                      <div className="flex items-center gap-3 text-xs text-slate-600 pt-2 border-t border-slate-100">
+                        {product.areaSqFt && (
+                          <span className="font-medium">📏 {product.areaSqFt} sq.ft</span>
+                        )}
+                        {product.units && (
+                          <span className="font-medium">🏢 {product.units} units</span>
+                        )}
+                      </div>
+                    )}
+
+                    {Object.keys(product.details || {}).length > 0 && (
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2 pt-2 border-t border-slate-100">
+                        {Object.entries(product.details || {}).map(
+                          ([key, value]) => (
+                            <div key={key}>
+                              <span className="text-[10px] font-semibold uppercase text-slate-400">
+                                {key}
+                              </span>
+                              <p className="break-words text-xs text-slate-700">
+                                {String(value) || "—"}
+                              </p>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
               <div className="mt-4">
                 <h3 className="text-xs font-bold text-slate-700">
-                  Client-shareable documents
+                  Project Documents ({project.documents?.length || 0})
                 </h3>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  {project.documents?.length > 0
-                    ? project.documents.map((doc: any) => (
-                        <button
-                          key={doc._id}
-                          onClick={() => openProjectDocument(doc)}
-                          className="flex items-center gap-3 rounded-xl bg-white p-3 text-left hover:ring-1 hover:ring-indigo-200"
-                        >
-                          <FileText size={16} className="text-indigo-600" />
-                          <span className="min-w-0 flex-1">
-                            <b className="block truncate text-xs text-slate-900">
-                              {doc.name}
-                            </b>
-                            <small className="text-[10px] text-slate-500">
-                              {doc.category}
-                            </small>
-                          </span>
-                          <ExternalLink size={13} className="text-slate-400" />
-                        </button>
-                      ))
-                    : [
-                        "Project Brochure (Demo)",
-                        "Price Sheet (Demo)",
-                        "Floor Plan (Demo)",
-                      ].map((name) => (
-                        <div
-                          key={name}
-                          className="flex items-center gap-3 rounded-xl border border-dashed border-indigo-200 bg-white p-3"
-                        >
-                          <FileText size={16} className="text-indigo-400" />
-                          <span>
-                            <b className="block text-xs text-slate-700">
-                              {name}
-                            </b>
-                            <small className="text-[10px] text-slate-400">
-                              Demo placeholder · admin can upload the real file
-                            </small>
-                          </span>
-                        </div>
-                      ))}
-                </div>
+                {project.documents?.length > 0 ? (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {project.documents.map((doc: any) => (
+                      <button
+                        key={doc._id}
+                        onClick={() => openProjectDocument(doc)}
+                        className="flex items-center gap-3 rounded-xl bg-white p-3 text-left hover:ring-1 hover:ring-indigo-200"
+                      >
+                        <FileText size={16} className="text-indigo-600" />
+                        <span className="min-w-0 flex-1">
+                          <b className="block truncate text-xs text-slate-900">
+                            {doc.name}
+                          </b>
+                          <small className="text-[10px] text-slate-500">
+                            {doc.category}
+                          </small>
+                        </span>
+                        <ExternalLink size={13} className="text-slate-400" />
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-400">
+                    No documents uploaded for this project yet.
+                  </p>
+                )}
               </div>
             </section>
           )}
@@ -360,12 +575,9 @@ export default function LeadDetail() {
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="font-semibold">Lead form responses</h2>
-                  <p className="text-xs text-slate-500">
-                    Original Meta form answers
-                  </p>
+                  <h2 className="font-semibold text-slate-900">Lead form responses</h2>
                 </div>
-                <MessageSquare size={17} />
+                <MessageSquare size={17} className="text-slate-500" />
               </div>
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 {fields.map((f: any) => (
@@ -387,12 +599,23 @@ export default function LeadDetail() {
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="font-semibold">Transparency timeline</h2>
+                <h2 className="font-semibold text-slate-900">Transparency timeline</h2>
                 <p className="text-xs text-slate-500">
-                  {data.activities.length} events
+                  {data.activities.length} recorded events
                 </p>
               </div>
-              <Clock3 size={17} />
+              <div className="flex items-center gap-2">
+                {data.activities.length > 0 && (
+                  <button
+                    onClick={downloadTransparencyTimeline}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors shadow-xs"
+                  >
+                    <Download size={13} />
+                    <span>Download Timeline</span>
+                  </button>
+                )}
+                <Clock3 size={17} className="text-slate-400" />
+              </div>
             </div>
             <div className="mt-5 max-h-[50vh] overflow-y-scroll">
               {data.activities.map((a: any, i: number) => (
@@ -423,19 +646,71 @@ export default function LeadDetail() {
         <aside className="space-y-5">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Meta source</h2>
-              <Database size={16} />
+              <div>
+                <h2 className="font-semibold text-slate-900">Meta source details</h2>
+                {lead.businessProject && (
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600">
+                    <Building2 size={11} />
+                    {lead.businessProject.business?.name ? `${lead.businessProject.business.name} · ` : ""}
+                    {lead.businessProject.name}
+                  </span>
+                )}
+              </div>
+              <Database size={16} className="text-slate-500" />
             </div>
             <div className="mt-4 space-y-2">
               {[
-                ["Business", lead.meta?.businessId || project?.name],
-                ["Page ID", lead.meta?.pageId],
-                ["Ad account", lead.meta?.adAccountId],
-                ["Campaign ID", lead.meta?.campaignId],
-                ["Ad set ID", lead.meta?.adSetId],
-                ["Ad ID", lead.meta?.adId],
-                ["Form ID", lead.meta?.formId],
-                ["Meta lead ID", lead.metaLeadId],
+                [
+                  "Page Name",
+                  lead.meta?.pageName ||
+                    lead.meta?.page_name ||
+                    lead.meta?.rawPayload?.page_name ||
+                    lead.meta?.rawPayload?.form_data?.page_name ||
+                    lead.meta?.rawPayload?.entry?.[0]?.changes?.[0]?.value?.page_name,
+                ],
+                [
+                  "Form Name",
+                  lead.formName ||
+                    lead.meta?.formName ||
+                    lead.meta?.form_name ||
+                    lead.meta?.rawPayload?.form_name ||
+                    lead.meta?.rawPayload?.form_data?.form_name ||
+                    lead.meta?.rawPayload?.entry?.[0]?.changes?.[0]?.value?.form_name,
+                ],
+                [
+                  "Form ID",
+                  lead.meta?.formId ||
+                    lead.meta?.form_id ||
+                    lead.meta?.rawPayload?.form_id ||
+                    lead.meta?.rawPayload?.form_data?.form_id ||
+                    lead.meta?.rawPayload?.entry?.[0]?.changes?.[0]?.value?.form_id,
+                ],
+                [
+                  "Page ID",
+                  lead.meta?.pageId ||
+                    lead.meta?.page_id ||
+                    lead.meta?.rawPayload?.page_id ||
+                    lead.meta?.rawPayload?.form_data?.page_id ||
+                    lead.meta?.rawPayload?.entry?.[0]?.id ||
+                    lead.meta?.rawPayload?.entry?.[0]?.changes?.[0]?.value?.page_id,
+                ],
+                [
+                  "Ad ID",
+                  lead.meta?.adId ||
+                    lead.meta?.ad_id ||
+                    lead.meta?.rawPayload?.ad_id ||
+                    lead.meta?.rawPayload?.form_data?.ad_id ||
+                    lead.meta?.rawPayload?.entry?.[0]?.changes?.[0]?.value?.ad_id,
+                ],
+                [
+                  "Meta Lead ID",
+                  lead.metaLeadId ||
+                    lead.meta?.leadgenId ||
+                    lead.meta?.lead_id ||
+                    lead.meta?.rawPayload?.leadgen_id ||
+                    lead.meta?.rawPayload?.lead_id ||
+                    lead.meta?.rawPayload?.entry?.[0]?.changes?.[0]?.value?.leadgen_id,
+                ],
               ].map(([k, v]) => (
                 <div
                   key={k}
@@ -456,7 +731,7 @@ export default function LeadDetail() {
             <div className="mt-3 space-y-3">
               {data.calls.length ? (
                 data.calls.map((c: any) => (
-                  <div key={c._id} className="flex gap-2">
+                  <div key={c._id} className="flex gap-2 border-l-2 border-slate-400">
                     <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-indigo-50 text-indigo-600">
                       <Phone size={13} />
                     </div>
@@ -484,7 +759,7 @@ export default function LeadDetail() {
             <div className="mt-3 space-y-3">
               {data.followups.length ? (
                 data.followups.map((f: any) => (
-                  <div key={f._id} className="rounded-xl bg-slate-50 p-3">
+                  <div key={f._id} className="rounded-xl bg-slate-50 p-3 border-l-2 border-slate-400">
                     <b className="text-xs">
                       {f.type} · {f.status}
                     </b>
@@ -507,7 +782,7 @@ export default function LeadDetail() {
       </div>
       {modal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:p-5">
-          <div className="w-full max-w-lg rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl">
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="font-bold text-slate-900">

@@ -12,22 +12,23 @@ export type ProductType =
   | "2BHK"
   | "3BHK"
   | "4BHK"
+  | "PENTHOUSE"
   | "OTHER";
 
 export interface IProjectProduct {
   type: ProductType;
   customType?: string;
+  priceRange?: string;
+  areaSqFt?: string;
+  units?: number;
+  isPenthouse?: boolean;
   details: Record<string, unknown>;
 }
 
 export interface IProjectMetaSource {
-  label?: string;
-  businessId?: string;
+  pageName?: string;
   pageId?: string;
-  adAccountId?: string;
-  campaignId?: string;
-  adSetId?: string;
-  adId?: string;
+  formName?: string;
   formId?: string;
 }
 
@@ -45,9 +46,12 @@ export interface IProjectDocument {
 }
 
 export interface IBusinessProject extends Document {
+  business?: Types.ObjectId;
   name: string;
   stage: ProjectStage;
+  location?: string;
   developerGroup?: string;
+  hasRera?: boolean;
   reraNumber?: string;
   penthouse: boolean;
   products: IProjectProduct[];
@@ -71,6 +75,8 @@ export interface IBusinessProject extends Document {
   documents: IProjectDocument[];
   metaSetupSkipped: boolean;
   documentsSetupSkipped: boolean;
+  leadLimit: number;
+  leadLimitType: "DAILY" | "MONTHLY" | "NONE";
   isActive: boolean;
   createdBy: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -111,6 +117,11 @@ const documentSchema = new Schema<IProjectDocument>(
 
 const schema = new Schema<IBusinessProject>(
   {
+    business: {
+      type: Schema.Types.ObjectId,
+      ref: "Business",
+      index: true,
+    },
     name: { type: String, required: true, trim: true, index: true },
     stage: {
       type: String,
@@ -118,7 +129,9 @@ const schema = new Schema<IBusinessProject>(
       required: true,
       index: true,
     },
+    location: String,
     developerGroup: String,
+    hasRera: { type: Boolean, default: false },
     reraNumber: String,
     penthouse: { type: Boolean, default: false },
     products: [
@@ -135,11 +148,16 @@ const schema = new Schema<IBusinessProject>(
             "2BHK",
             "3BHK",
             "4BHK",
+            "PENTHOUSE",
             "OTHER",
           ],
           required: true,
         },
         customType: String,
+        priceRange: String,
+        areaSqFt: String,
+        units: Number,
+        isPenthouse: { type: Boolean, default: false },
         details: { type: Schema.Types.Mixed, default: {} },
       },
     ],
@@ -162,14 +180,10 @@ const schema = new Schema<IBusinessProject>(
     metaSources: {
       type: [
         {
-          label: String,
-          businessId: String,
-          pageId: String,
-          adAccountId: String,
-          campaignId: String,
-          adSetId: String,
-          adId: String,
-          formId: String,
+          pageName: { type: String, trim: true },
+          pageId: { type: String, trim: true },
+          formName: { type: String, trim: true },
+          formId: { type: String, trim: true },
         },
       ],
       default: [],
@@ -177,6 +191,12 @@ const schema = new Schema<IBusinessProject>(
     documents: { type: [documentSchema], default: [] },
     metaSetupSkipped: { type: Boolean, default: false },
     documentsSetupSkipped: { type: Boolean, default: false },
+    leadLimit: { type: Number, default: 0, min: 0 },
+    leadLimitType: {
+      type: String,
+      enum: ["DAILY", "MONTHLY", "NONE"],
+      default: "NONE",
+    },
     isActive: { type: Boolean, default: true, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     updatedBy: { type: Schema.Types.ObjectId, ref: "User" },
@@ -185,8 +205,9 @@ const schema = new Schema<IBusinessProject>(
 );
 
 schema.index({ "metaSources.pageId": 1 });
-schema.index({ "metaSources.adId": 1 });
 schema.index({ "metaSources.formId": 1 });
+schema.index({ "metaSources.formName": 1 });
+schema.index({ "metaSources.pageName": 1 });
 
 export const BusinessProject = model<IBusinessProject>(
   "BusinessProject",

@@ -1,12 +1,15 @@
-import { Schema, model, Document } from "mongoose";
+import { Schema, model, Document, Types } from "mongoose";
 
-export type Role = "ADMIN" | "MANAGER" | "SALES";
+export type Role = "ADMIN" | "MANAGER" | "SALES" | "BUSINESS";
 
 export interface IUser extends Document {
   name: string;
   email: string;
   passwordHash: string;
   role: Role;
+  business?: Types.ObjectId;
+  businessProject?: Types.ObjectId;
+  assignedProjects: Types.ObjectId[];
   isActive: boolean;
   dailyLeadLimit: number;
   autoLeadCount: number;
@@ -34,8 +37,22 @@ const schema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ["ADMIN", "MANAGER", "SALES"],
+      enum: ["ADMIN", "MANAGER", "SALES", "BUSINESS"],
       default: "SALES",
+    },
+    business: {
+      type: Schema.Types.ObjectId,
+      ref: "Business",
+      index: true,
+    },
+    businessProject: {
+      type: Schema.Types.ObjectId,
+      ref: "BusinessProject",
+      index: true,
+    },
+    assignedProjects: {
+      type: [{ type: Schema.Types.ObjectId, ref: "BusinessProject" }],
+      default: [],
     },
     isActive: {
       type: Boolean,

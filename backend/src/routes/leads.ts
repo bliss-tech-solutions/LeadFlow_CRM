@@ -1,9 +1,11 @@
 import { Router } from "express";
+import ExcelJS from "exceljs";
 import { Lead } from "../models/Lead";
 import { Activity } from "../models/Activity";
 import { Call } from "../models/Call";
 import { FollowUp } from "../models/FollowUp";
 import { User } from "../models/User";
+import { BusinessProject } from "../models/BusinessProject";
 import { auth, roles } from "../middleware/auth";
 import { logActivity, logAudit } from "../utils/activity";
 import { Notification } from "../models/Notification";
@@ -22,41 +24,129 @@ const VALID_STATUSES = [
 ];
 
 /**
- * Build the lead visibility filter: ADMIN sees all released leads, others see only assigned leads.
+ * Build the lead visibility filter:
+ * - ADMIN / MANAGER sees all released leads.
+ * - BUSINESS sees all released leads for their assigned project.
+ * - SALES sees only their assigned leads.
  */
-function visibleLeadFilter(req: any) {
+async function visibleLeadFilter(req: any) {
   const filter: Record<string, unknown> = {
     deliveryStatus: { $ne: "HELD" },
   };
 
-  if (req.user?.role !== "ADMIN") {
-    filter.assignedTo = req.user!.id;
+  const { business, businessProject } = req.query as Record<string, string>;
+
+  if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") {
+    if (business) {
+      const bizProjects = await BusinessProject.find({ business }).select("_id").lean();
+      filter.businessProject = { $in: bizProjects.map((p: any) => p._id) };
+    } else if (businessProject) {
+      filter.businessProject = businessProject;
+    }
+    return filter;
+  }
+
+  if (req.user?.role === "BUSINESS") {
+    let businessId = req.user.business;
+    if (!businessId) {
+      const me = await User.findById(req.user.id).select("business businessProject").lean();
+      businessId = me?.business ? String(me.business) : undefined;
+    }
+    const projectIds: any[] = [];
+    if (businessId) {
+      const bizProjects = await BusinessProject.find({ business: businessId }).select("_id").lean();
+      projectIds.push(...bizProjects.map((p: any) => p._id));
+    }
+    if (req.user.businessProject) {
+      projectIds.push(req.user.businessProject);
+    }
+    if (!projectIds.length) {
+      filter.businessProject = { $in: [] };
+      return filter;
+    }
+
+    if (businessProject && projectIds.map(String).includes(String(businessProject))) {
+      filter.businessProject = businessProject;
+    } else {
+      filter.businessProject = { $in: projectIds };
+    }
+    return filter;
+  }
+
+  // SALES role
+  filter.assignedTo = req.user!.id;
+  filter.deliveryStatus = "RELEASED";
+
+  let assignedProjects = req.user.assignedProjects;
+  if (!assignedProjects) {
+    const me = await User.findById(req.user.id).select("assignedProjects").lean();
+    assignedProjects = me?.assignedProjects?.map(String) || [];
+  }
+
+  if (assignedProjects && assignedProjects.length > 0) {
+    if (businessProject && assignedProjects.map(String).includes(String(businessProject))) {
+      filter.businessProject = businessProject;
+    } else {
+      filter.businessProject = { $in: assignedProjects };
+    }
+  } else if (businessProject) {
+    filter.businessProject = businessProject;
   }
 
   return filter;
 }
 
-/**
- * Check whether the current user may work with a specific lead.
- */
 async function canAccessLead(req: any, leadId: string) {
-  if (req.user?.role === "ADMIN") return true;
+  if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") return true;
 
-  return Boolean(
-    await Lead.exists({
-      _id: leadId,
-      assignedTo: req.user!.id,
-      deliveryStatus: "RELEASED",
-    }),
-  );
+  if (req.user?.role === "BUSINESS") {
+    let businessId = req.user.business;
+    if (!businessId) {
+      const u = await User.findById(req.user.id).select("business businessProject").lean();
+      businessId = u?.business ? String(u.business) : undefined;
+    }
+    const projectIds: any[] = [];
+    if (businessId) {
+      const bizProjects = await BusinessProject.find({ business: businessId }).select("_id").lean();
+      projectIds.push(...bizProjects.map((p: any) => p._id));
+    }
+    if (req.user.businessProject) {
+      projectIds.push(req.user.businessProject);
+    }
+    if (!projectIds.length) return false;
+    return Boolean(
+      await Lead.exists({
+        _id: leadId,
+        businessProject: { $in: projectIds },
+        deliveryStatus: { $ne: "HELD" },
+      }),
+    );
+  }
+
+  const salesLead: any = await Lead.findOne({
+    _id: leadId,
+    assignedTo: req.user!.id,
+    deliveryStatus: "RELEASED",
+  }).select("businessProject").lean();
+
+  if (!salesLead) return false;
+
+  let assignedProjects = req.user.assignedProjects;
+  if (!assignedProjects) {
+    const me = await User.findById(req.user.id).select("assignedProjects").lean();
+    assignedProjects = me?.assignedProjects?.map(String) || [];
+  }
+
+  if (assignedProjects && assignedProjects.length > 0 && salesLead.businessProject) {
+    return assignedProjects.map(String).includes(String(salesLead.businessProject));
+  }
+
+  return true;
 }
 
-/**
- * GET /api/leads/stats
- * Return lead funnel counts scoped to the authenticated user's access.
- */
 r.get("/stats", auth, async (req, res) => {
-  const match = visibleLeadFilter(req);
+  const match = await visibleLeadFilter(req);
+
 
   const [total, newCount, interested, followups, won, lost, held] =
     await Promise.all([
@@ -67,7 +157,7 @@ r.get("/stats", auth, async (req, res) => {
       Lead.countDocuments({ ...match, status: "WON" }),
       Lead.countDocuments({ ...match, status: "LOST" }),
       req.user?.role === "ADMIN"
-        ? Lead.countDocuments({ deliveryStatus: "HELD" })
+        ? Lead.countDocuments({ ...match, deliveryStatus: "HELD" })
         : Promise.resolve(0),
     ]);
 
@@ -92,11 +182,12 @@ r.get("/", auth, async (req, res) => {
     status,
     source,
     assignedTo,
+    businessProject,
     page = "1",
     limit = "20",
   } = req.query as Record<string, string>;
 
-  const q: any = visibleLeadFilter(req);
+  const q: any = await visibleLeadFilter(req);
 
   if (status) q.status = status;
   if (source) q.source = source;
@@ -105,6 +196,8 @@ r.get("/", auth, async (req, res) => {
   if (assignedTo && req.user?.role === "ADMIN") {
     q.assignedTo = assignedTo;
   }
+
+
 
   if (search) {
     q.$or = [
@@ -116,6 +209,7 @@ r.get("/", auth, async (req, res) => {
       { formName: { $regex: search, $options: "i" } },
       { "meta.businessId": { $regex: search, $options: "i" } },
       { "meta.pageId": { $regex: search, $options: "i" } },
+      { "meta.pageName": { $regex: search, $options: "i" } },
       { "meta.fieldData.name": { $regex: search, $options: "i" } },
       { "meta.fieldData.values": { $regex: search, $options: "i" } },
     ];
@@ -143,26 +237,151 @@ r.get("/", auth, async (req, res) => {
 });
 
 /**
- * GET /api/leads/followups/all
- * Return pending follow-ups scoped to the authenticated user's assigned work.
+ * GET /api/leads/export
+ * Download an Excel file of leads using exceljs, scoped to user permissions and active filters.
  */
-r.get("/followups/all", auth, async (req, res) => {
-  const query: Record<string, unknown> =
-    req.user?.role === "ADMIN"
-      ? { status: "PENDING" }
-      : { user: req.user!.id, status: "PENDING" };
+r.get("/export", auth, async (req, res) => {
+  const {
+    search,
+    status,
+    source,
+    assignedTo,
+    businessProject,
+  } = req.query as Record<string, string>;
 
-  res.json({
-    followups: await FollowUp.find(query)
-      .populate("lead", "name email phone status")
-      .populate("user", "name email")
-      .sort({ scheduledAt: 1 }),
-  });
+  const q: any = await visibleLeadFilter(req);
+
+  if (status) q.status = status;
+  if (source) q.source = source;
+
+  if (assignedTo && req.user?.role === "ADMIN") {
+    q.assignedTo = assignedTo;
+  }
+
+
+
+  if (search) {
+    q.$or = [
+      { name: { $regex: search, $options: "i" } },
+      { email: { $regex: search, $options: "i" } },
+      { phone: { $regex: search, $options: "i" } },
+      { source: { $regex: search, $options: "i" } },
+      { campaign: { $regex: search, $options: "i" } },
+      { formName: { $regex: search, $options: "i" } },
+      { "meta.businessId": { $regex: search, $options: "i" } },
+      { "meta.pageId": { $regex: search, $options: "i" } },
+      { "meta.pageName": { $regex: search, $options: "i" } },
+      { "meta.fieldData.name": { $regex: search, $options: "i" } },
+      { "meta.fieldData.values": { $regex: search, $options: "i" } },
+    ];
+  }
+
+  const leads = await Lead.find(q)
+    .populate("assignedTo", "name email")
+    .populate({ path: "businessProject", select: "name stage location reraNumber business", populate: { path: "business", select: "name contactNo" } })
+    .sort({ updatedAt: -1 })
+    .limit(5000)
+    .lean();
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "LeadFlow CRM";
+  workbook.created = new Date();
+
+  const worksheet = workbook.addWorksheet("Leads");
+
+  worksheet.columns = [
+    { header: "Lead Name", key: "name", width: 24 },
+    { header: "Phone", key: "phone", width: 18 },
+    { header: "Email", key: "email", width: 28 },
+    { header: "Business / Project", key: "business", width: 24 },
+    { header: "Status", key: "status", width: 16 },
+    { header: "Contact Status", key: "contactStatus", width: 16 },
+    { header: "Assigned To", key: "assignedTo", width: 20 },
+    { header: "Source", key: "source", width: 16 },
+    { header: "Campaign", key: "campaign", width: 22 },
+    { header: "Form Name", key: "formName", width: 22 },
+    { header: "Next Follow-up", key: "nextFollowUpAt", width: 22 },
+    { header: "Created At", key: "createdAt", width: 22 },
+    { header: "Updated At", key: "updatedAt", width: 22 },
+    { header: "Extra Details", key: "extraDetails", width: 36 },
+  ];
+
+  const headerRow = worksheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  headerRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF1E293B" },
+  };
+  headerRow.alignment = { vertical: "middle", horizontal: "left" };
+  headerRow.height = 24;
+
+  const EXCLUDED_EXTRA_KEYS = new Set([
+    "full_name", "name", "email", "phone_number", "phone", "contact",
+    "lead_id", "leadgen_id", "id", "page_id", "page_name", "form_id",
+    "form_name", "ad_id", "adset_id", "campaign_id", "campaign_name",
+    "created_at", "created_time", "platform", "ad_account_id"
+  ]);
+
+  for (const l of leads as any[]) {
+    const extraEntries: string[] = [];
+    if (l.meta?.formData && typeof l.meta.formData === "object") {
+      for (const [k, v] of Object.entries(l.meta.formData)) {
+        if (!EXCLUDED_EXTRA_KEYS.has(k.toLowerCase()) && v !== null && v !== undefined && String(v).trim()) {
+          extraEntries.push(`${k.replace(/_/g, " ")}: ${String(v).replace(/_/g, " ")}`);
+        }
+      }
+    }
+    if (!extraEntries.length && Array.isArray(l.meta?.fieldData)) {
+      for (const f of l.meta.fieldData) {
+        if (f?.name && !EXCLUDED_EXTRA_KEYS.has(String(f.name).toLowerCase())) {
+          const val = Array.isArray(f.values) ? f.values.join(", ") : String(f.values ?? "");
+          if (val.trim()) {
+            extraEntries.push(`${String(f.name).replace(/_/g, " ")}: ${val.replace(/_/g, " ")}`);
+          }
+        }
+      }
+    }
+    const extras = extraEntries.join("; ");
+
+    const row = worksheet.addRow({
+      name: l.name || "Unnamed lead",
+      phone: l.phone || "",
+      email: l.email || "",
+      business: l.businessProject?.name || l.meta?.businessId || "Unmapped",
+      status: l.status || "NEW",
+      contactStatus: l.contactStatus || "",
+      assignedTo: l.assignedTo?.name || "Unassigned",
+      source: l.source || "",
+      campaign: l.campaign || "",
+      formName: l.formName || "",
+      nextFollowUpAt: l.nextFollowUpAt
+        ? new Date(l.nextFollowUpAt).toLocaleString()
+        : "",
+      createdAt: l.createdAt ? new Date(l.createdAt).toLocaleString() : "",
+      updatedAt: l.updatedAt ? new Date(l.updatedAt).toLocaleString() : "",
+      extraDetails: extras,
+    });
+    row.alignment = { vertical: "middle" };
+  }
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="leads-${dateStr}.xlsx"`,
+  );
+
+  await workbook.xlsx.write(res);
+  res.end();
 });
 
 /**
  * GET /api/leads/:id
- * Return one accessible lead plus activity, calls, follow-ups and project documents.
+ * Retrieve a single lead and all historical activities, calls, and follow-ups.
  */
 r.get("/:id", auth, async (req, res) => {
   if (!(await canAccessLead(req, String(req.params.id)))) {
@@ -173,10 +392,7 @@ r.get("/:id", auth, async (req, res) => {
 
   const lead = await Lead.findById(req.params.id)
     .populate("assignedTo", "name email")
-    .populate(
-      "businessProject",
-      "name stage developerGroup reraNumber penthouse products upcoming completed ongoing metaSources documents",
-    );
+    .populate({ path: "businessProject", select: "name stage location reraNumber documents products ongoing upcoming completed business", populate: { path: "business", select: "name contactNo detail" } });
 
   if (!lead) {
     return res.status(404).json({ message: "Lead not found" });
@@ -184,7 +400,7 @@ r.get("/:id", auth, async (req, res) => {
 
   const [activities, calls, followups] = await Promise.all([
     Activity.find({ lead: lead._id })
-      .populate("actor", "name role")
+      .populate("actor", "name")
       .sort({ createdAt: -1 }),
     Call.find({ lead: lead._id })
       .populate("user", "name")
@@ -403,9 +619,6 @@ r.post("/:id/followups", auth, async (req, res) => {
       .json({ message: "Follow-up must be scheduled in the future" });
   }
 
-  // Admins may explicitly choose a follow-up owner. If they do not,
-  // the follow-up must follow the lead's existing salesperson assignment
-  // instead of silently becoming an Admin-owned follow-up.
   const leadForFollowup = await Lead.findById(req.params.id)
     .select("assignedTo name")
     .lean();
@@ -422,12 +635,14 @@ r.post("/:id/followups", auth, async (req, res) => {
   const followupUserId =
     req.user!.role === "ADMIN"
       ? (requestedOwnerId || defaultOwnerId)
-      : req.user!.id;
+      : (req.user!.role === "BUSINESS"
+          ? (leadForFollowup.assignedTo ? String(leadForFollowup.assignedTo) : req.user!.id)
+          : req.user!.id);
 
   const assignedUser = await User.findOne({
     _id: followupUserId,
     isActive: true,
-    role: { $in: ["ADMIN", "MANAGER", "SALES"] },
+    role: { $in: ["ADMIN", "MANAGER", "SALES", "BUSINESS"] },
   }).select("_id name email role");
 
   if (!assignedUser) {
@@ -456,9 +671,6 @@ r.post("/:id/followups", auth, async (req, res) => {
     description: `${new Date(f.scheduledAt).toLocaleString()} · ${assignedUser.name}`,
   });
 
-  // The assigned salesperson/owner and all workspace managers/admins are
-  // notified. The recipient query is de-duplicated by MongoDB's $or match,
-  // so an Admin who owns a follow-up does not receive duplicate DB records.
   const recipients = await User.find({
     isActive: true,
     $or: [
@@ -496,10 +708,7 @@ r.post("/:id/followups", auth, async (req, res) => {
       actorId: req.user!.id,
     };
 
-    // Admin/manager workspace notification.
     io.to("role:ADMIN").emit("followup_updated", payload);
-
-    // The actual owner receives the same event even when an Admin created it.
     io.to(`user:${assignedUser.id}`).emit("followup_updated", payload);
   }
 

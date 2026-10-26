@@ -4,6 +4,7 @@ import {
   getDeliverySchedule,
   isWithinHoldWindow,
   chooseRandomSalesperson,
+  isLeadLimitReached,
 } from "./leadDelivery.service";
 import { User } from "../models/User";
 import { Notification } from "../models/Notification";
@@ -14,6 +15,37 @@ type MetaField = {
   name: string;
   values: string[];
 };
+
+/**
+ * Safely parse any date value (string ISO, unix timestamp, milliseconds, or fallback)
+ * without throwing Mongoose CastError on invalid dates or template strings.
+ */
+export function parseSafeDate(val: any): Date {
+  if (!val) return new Date();
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? new Date() : val;
+  }
+  if (typeof val === "number") {
+    const ts = val < 10000000000 ? val * 1000 : val;
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.startsWith("{{") || trimmed === "Invalid Date") {
+      return new Date();
+    }
+    if (/^\d+$/.test(trimmed)) {
+      const num = Number(trimmed);
+      const ts = num < 10000000000 ? num * 1000 : num;
+      const d = new Date(ts);
+      return isNaN(d.getTime()) ? new Date() : d;
+    }
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+  return new Date();
+}
 
 /**
  * Safely extracts the Meta webhook value object from different payload formats.
@@ -218,7 +250,7 @@ export async function fetchMetaLeadDetails(
 /**
  * Normalize the Meta webhook event plus optional Graph API lead details.
  */
-export function normalizeMetaPayload(payload: any, metaLead: any = null) {
+export function normalizeMetaPayload(payload: any, metaLead: any = null, source = "META") {
   const value = extractWebhookValue(payload);
 
   const fields = extractFieldData(value, metaLead);
@@ -227,43 +259,48 @@ export function normalizeMetaPayload(payload: any, metaLead: any = null) {
 
   const leadgenId = extractLeadgenId(payload) ?? metaLead?.id ?? null;
 
-  const createdTime =
-    metaLead?.created_time ?? value?.created_time ?? undefined;
+  const rawCreatedTime =
+    metaLead?.created_time ?? value?.created_time ?? payload?.created_time ?? undefined;
+
+  const pageName = value?.page_name ?? payload?.page_name ?? undefined;
+  const formName = value?.form_name ?? map.form_name ?? payload?.form_name ?? undefined;
+  const formData = value?.form_data ?? payload?.form_data ?? undefined;
 
   return {
     metaLeadId: leadgenId,
 
-    name: map.full_name ?? map.name ?? value?.name ?? "Meta Lead",
+    name: map.full_name ?? map.name ?? value?.name ?? (source === "LEADSYNC" ? "LeadSync Lead" : "Meta Lead"),
 
     email: map.email ?? value?.email,
 
     phone: map.phone_number ?? map.phone ?? value?.phone,
 
-    campaign: value?.campaign_name ?? map.campaign_name,
+    campaign: value?.campaign_name ?? map.campaign_name ?? payload?.campaign_name ?? payload?.campaign,
 
-    formName: value?.form_name ?? map.form_name,
+    formName: formName,
 
-    source: "META",
+    source,
 
     meta: {
       businessId: undefined,
       fieldData: fields,
+      formData: formData || undefined,
 
       rawPayload: metaLead ?? payload,
 
-      pageId: value?.page_id,
+      pageId: value?.page_id ?? payload?.page_id,
+      pageName: pageName,
 
-      adId: value?.ad_id,
+      adId: value?.ad_id ?? payload?.ad_id,
 
-      adSetId: value?.adgroup_id ?? value?.ad_set_id,
+      adSetId: value?.adgroup_id ?? value?.ad_set_id ?? payload?.ad_set_id ?? payload?.adset_id,
 
-      formId: value?.form_id,
+      campaignId: value?.campaign_id ?? payload?.campaign_id,
 
-      createdTime: createdTime
-        ? new Date(
-            typeof createdTime === "number" ? createdTime * 1000 : createdTime,
-          )
-        : undefined,
+      formId: value?.form_id ?? payload?.form_id,
+      formName: formName,
+
+      createdTime: parseSafeDate(rawCreatedTime),
     },
   };
 }
@@ -275,7 +312,7 @@ export function normalizeMetaPayload(payload: any, metaLead: any = null) {
 export async function ingestMetaLead(
   payload: any,
   io: any,
-  options: { fetchDetails?: boolean } = {},
+  options: { fetchDetails?: boolean; source?: string } = {},
 ) {
   console.log(
     "[meta] incoming webhook payload:",
@@ -297,7 +334,7 @@ export async function ingestMetaLead(
     metaLead = await fetchMetaLeadDetails(leadgenId);
   }
 
-  const data = normalizeMetaPayload(payload, metaLead);
+  const data = normalizeMetaPayload(payload, metaLead, options.source ?? "META");
 
   /**
    * Final fallback:
@@ -337,22 +374,40 @@ export async function ingestMetaLead(
 
   /**
    * Match Meta source IDs to an admin-configured business project.
+   * Matches by formId, pageId, formName, or pageName.
    */
-  const project = await BusinessProject.findOne({
+  const orConditions: any[] = [];
+  if (data.meta?.formId) orConditions.push({ formId: data.meta.formId });
+  if (data.meta?.pageId) orConditions.push({ pageId: data.meta.pageId });
+  if (data.meta?.formName) orConditions.push({ formName: data.meta.formName });
+  if (data.formName) orConditions.push({ formName: data.formName });
+  if (data.meta?.pageName) orConditions.push({ pageName: data.meta.pageName });
+
+  const project = orConditions.length > 0 ? await BusinessProject.findOne({
     isActive: true,
     metaSources: {
       $elemMatch: {
-        $or: [
-          ...(data.meta?.pageId ? [{ pageId: data.meta.pageId }] : []),
-          ...(data.meta?.adId ? [{ adId: data.meta.adId }] : []),
-          ...(data.meta?.formId ? [{ formId: data.meta.formId }] : []),
-        ],
+        $or: orConditions,
       },
     },
-  }).select("_id name");
+  }).select("_id name business metaSources") : null;
 
   if (project) {
     data.meta.businessId = project.id;
+    const matchedSource = (project as any).metaSources?.find((m: any) =>
+      (data.meta?.formId && m.formId === data.meta.formId) ||
+      (data.meta?.pageId && m.pageId === data.meta.pageId) ||
+      (data.meta?.formName && m.formName === data.meta.formName) ||
+      (data.formName && m.formName === data.formName) ||
+      (data.meta?.pageName && m.pageName === data.meta.pageName)
+    );
+    if (matchedSource) {
+      if (!data.meta.pageName && matchedSource.pageName) data.meta.pageName = matchedSource.pageName;
+      if (!data.meta.pageId && matchedSource.pageId) data.meta.pageId = matchedSource.pageId;
+      if (!data.meta.formName && matchedSource.formName) data.meta.formName = matchedSource.formName;
+      if (!data.meta.formId && matchedSource.formId) data.meta.formId = matchedSource.formId;
+      if (!data.formName && matchedSource.formName) data.formName = matchedSource.formName;
+    }
   }
 
   /**
@@ -360,8 +415,9 @@ export async function ingestMetaLead(
    * immediately but are not assigned, notified or emitted until release.
    */
   const schedule = await getDeliverySchedule();
-  const shouldHold = isWithinHoldWindow(schedule);
-  const assignee = shouldHold ? null : await chooseRandomSalesperson();
+  const limitCheck = await isLeadLimitReached(project?._id);
+  const shouldHold = isWithinHoldWindow(schedule) || limitCheck.reached;
+  const assignee = shouldHold ? null : await chooseRandomSalesperson(project?._id);
 
   /**
    * Create the CRM lead.
@@ -391,9 +447,13 @@ export async function ingestMetaLead(
     lead: lead.id,
     actor: assignee?.id,
     type: shouldHold ? "LEAD_HELD" : "LEAD_CREATED",
-    title: shouldHold ? "Lead held by delivery schedule" : "Lead received",
+    title: shouldHold
+      ? (limitCheck.reached ? `Lead held (${limitCheck.reason})` : "Lead held by delivery schedule")
+      : "Lead received",
     description: shouldHold
-      ? `Meta lead received during the configured hold window${project ? ` · ${project.name}` : ""}.`
+      ? (limitCheck.reached
+          ? `Meta lead received but held: ${limitCheck.reason}${project ? ` · ${project.name}` : ""}.`
+          : `Meta lead received during the configured hold window${project ? ` · ${project.name}` : ""}.`)
       : `Lead received from Meta${data.formName ? ` · ${data.formName}` : ""}${project ? ` · ${project.name}` : ""}.`,
   });
 

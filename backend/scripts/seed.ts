@@ -4,11 +4,13 @@ import { User } from "../src/models/User";
 import { Lead } from "../src/models/Lead";
 import { env } from "../src/config/env";
 import { BusinessProject } from "../src/models/BusinessProject";
+
 async function main() {
   await connectDB();
   await User.deleteMany({});
   await Lead.deleteMany({});
   await BusinessProject.deleteMany({});
+
   const password = await bcrypt.hash("Admin@123", 10);
   const [admin, manager, sales] = await User.create([
     {
@@ -30,6 +32,7 @@ async function main() {
       role: "SALES",
     },
   ]);
+
   const project = await BusinessProject.create({
     name: "Zion Group Demo Residences",
     stage: "ONGOING",
@@ -116,6 +119,16 @@ async function main() {
     createdBy: admin._id,
   });
 
+  await User.create({
+    name: "Zion Business Partner",
+    email: "business@leadflow.local",
+    passwordHash: await bcrypt.hash("Business@123", 10),
+    role: "BUSINESS",
+    businessProject: project._id,
+    dailyLeadLimit: 0,
+    isActive: true,
+  });
+
   await Lead.create([
     {
       name: "Rahul Mehta",
@@ -147,6 +160,7 @@ async function main() {
       assignedAt: new Date(),
       assignmentSource: "AUTO",
       score: 91,
+      businessProject: project._id,
     },
     {
       name: "Vikram Patel",
@@ -161,9 +175,10 @@ async function main() {
       score: 67,
     },
   ]);
-  console.log("Seeded demo data.");
+  console.log("Seeded demo data with business partner.");
   process.exit(0);
 }
+
 main().catch((e) => {
   console.error(e);
   process.exit(1);

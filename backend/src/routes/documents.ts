@@ -10,7 +10,17 @@ const r = Router();
  * Check whether a user can access documents attached to a lead.
  */
 async function canAccessLeadDocuments(req: any, leadId: string) {
-  if (req.user?.role === "ADMIN") return true;
+  if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") return true;
+
+  if (req.user?.role === "BUSINESS") {
+    return Boolean(
+      await Lead.exists({
+        _id: leadId,
+        businessProject: req.user.businessProject,
+        deliveryStatus: { $ne: "HELD" },
+      }),
+    );
+  }
 
   return Boolean(
     await Lead.exists({
@@ -25,7 +35,11 @@ async function canAccessLeadDocuments(req: any, leadId: string) {
  * Check whether a user can access documents for a project.
  */
 async function canAccessProjectDocuments(req: any, projectId: string) {
-  if (req.user?.role === "ADMIN") return true;
+  if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") return true;
+
+  if (req.user?.role === "BUSINESS") {
+    return String(req.user.businessProject) === String(projectId);
+  }
 
   return Boolean(
     await Lead.exists({
@@ -56,7 +70,7 @@ r.get("/lead/:leadId", auth, async (req, res) => {
 
 /**
  * POST /api/documents/lead/:leadId
- * Store legacy lead-document metadata. Admin-only document management is preferred for project files.
+ * Store legacy lead-document metadata.
  */
 r.post("/lead/:leadId", auth, roles("ADMIN"), async (req, res) => {
   const document = await LeadDocument.create({

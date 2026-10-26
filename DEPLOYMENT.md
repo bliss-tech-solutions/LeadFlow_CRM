@@ -52,7 +52,7 @@ becomes:
 MyPass%40123
 ```
 
-Allow the backend host to connect to Atlas. For a first deployment, Atlas Network Access can use `0.0.0.0/0` only if the database user has a strong password and least-privilege database access; use a fixed outbound-IP allowlist when your hosting plan supports it.
+Allow the backend host to connect to Atlas. For a first deployment, Atlas Network Access can use `0.0.0.0/0` only if the database user has a strong password and least-privilege database access; use a fixed outbound-IP allowlist when your hosting plan sups it.
 
 ## 2. Backend on Render
 
@@ -74,7 +74,7 @@ Production environment variables:
 
 ```env
 NODE_ENV=production
-PORT=4000
+=4000
 MONGO_URI=mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
 MONGO_DB_NAME=leadflow
 JWT_SECRET=<32+ character random secret>

@@ -2,6 +2,8 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { User } from "../models/User";
+import { BusinessProject } from "../models/BusinessProject";
+import { Business } from "../models/Business";
 import { auth, roles } from "../middleware/auth";
 import { Notification } from "../models/Notification";
 import { logAudit } from "../utils/activity";
@@ -12,41 +14,236 @@ import { createDocumentUploadUrl, createPublicObjectUrl, deleteDocumentObject } 
 
 const r = Router();
 
+function getDateKey(timezone = "Asia/Kolkata") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "00";
+  const day = parts.find((part) => part.type === "day")?.value ?? "00";
+
+  return `${year}-${month}-${day}`;
+}
+
 /**
  * GET /api/users
- * List active users for admin/manager team management.
+ * List users with search, role filter, active/blocked status, and pagination.
  */
-r.get("/", auth, roles("ADMIN", "MANAGER"), async (_req, res) => {
-  const users = await User.find({ isActive: true })
+r.get("/", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
+  const filter: Record<string, unknown> = {};
+
+  // Business partner scoping
+  if (req.user?.role === "BUSINESS") {
+    let businessId = req.user.business;
+    if (!businessId) {
+      const me = await User.findById(req.user.id).select("business businessProject").lean();
+      businessId = me?.business ? String(me.business) : undefined;
+    }
+
+    const projectConditions: any[] = [];
+    if (businessId) {
+      const bizProjects = await BusinessProject.find({ business: businessId }).select("_id").lean();
+      const projIds = bizProjects.map((p: any) => p._id);
+      projectConditions.push({ business: businessId });
+      if (projIds.length) {
+        projectConditions.push({ assignedProjects: { $in: projIds } });
+        projectConditions.push({ businessProject: { $in: projIds } });
+      }
+    }
+    if (req.user.businessProject) {
+      projectConditions.push({ businessProject: req.user.businessProject });
+      projectConditions.push({ assignedProjects: req.user.businessProject });
+    }
+
+    if (projectConditions.length) {
+      filter.$or = projectConditions;
+    } else {
+      filter._id = req.user.id;
+    }
+  }
+
+  if (req.query.status === "ACTIVE" || req.query.isActive === "true") {
+    filter.isActive = true;
+  } else if (
+    req.query.status === "BLOCKED" ||
+    req.query.status === "INACTIVE" ||
+    req.query.isActive === "false"
+  ) {
+    filter.isActive = false;
+  } else if (
+    req.query.status === "ALL" ||
+    req.query.includeInactive === "true"
+  ) {
+    // include both active and blocked
+  } else if (!req.query.role || req.query.role !== "SALES") {
+    filter.isActive = true;
+  }
+
+  if (
+    req.query.role &&
+    ["ADMIN", "MANAGER", "SALES", "BUSINESS"].includes(String(req.query.role))
+  ) {
+    filter.role = req.query.role;
+  }
+
+  if (req.query.search) {
+    const searchStr = String(req.query.search).trim();
+    if (searchStr) {
+      const searchOr = [
+        { name: { $regex: searchStr, $options: "i" } },
+        { email: { $regex: searchStr, $options: "i" } },
+      ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: searchOr }];
+        delete filter.$or;
+      } else {
+        filter.$or = searchOr;
+      }
+    }
+  }
+
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const isPaginated =
+    req.query.page !== undefined ||
+    req.query.limit !== undefined ||
+    req.query.search !== undefined;
+  const limit =
+    req.query.limit !== undefined
+      ? Math.max(1, Math.min(100, Number(req.query.limit) || 10))
+      : isPaginated
+        ? 10
+        : 100;
+  const skip = (page - 1) * limit;
+
+  const total = await User.countDocuments(filter);
+  const users = await User.find(filter)
     .select("-passwordHash")
-    .sort({ name: 1 })
+    .populate("business", "name contactNo leadLimit leadLimitType")
+    .populate("businessProject", "name stage reraNumber developerGroup")
+    .populate("assignedProjects", "name stage location reraNumber")
+    .sort({ createdAt: -1, name: 1 })
+    .skip(skip)
+    .limit(limit)
     .lean();
 
-  const counts = await Lead.aggregate([
-    {
-      $match: {
-        deliveryStatus: "RELEASED",
-        assignedTo: { $exists: true },
+  const userIds = users.map((u) => u._id);
+
+  const [counts, projectCounts] = await Promise.all([
+    Lead.aggregate([
+      {
+        $match: {
+          deliveryStatus: "RELEASED",
+          assignedTo: { $in: userIds },
+        },
       },
-    },
-    { $group: { _id: "$assignedTo", count: { $sum: 1 } } },
+      { $group: { _id: "$assignedTo", count: { $sum: 1 } } },
+    ]),
+    Lead.aggregate([
+      {
+        $match: {
+          deliveryStatus: "RELEASED",
+          businessProject: { $exists: true },
+        },
+      },
+      { $group: { _id: "$businessProject", count: { $sum: 1 } } },
+    ]),
   ]);
 
-  const countMap = new Map(counts.map((item: any) => [String(item._id), Number(item.count || 0)]));
+  const countMap = new Map(
+    counts.map((item: any) => [String(item._id), Number(item.count || 0)]),
+  );
+  const projectCountMap = new Map(
+    projectCounts.map((item: any) => [
+      String(item._id),
+      Number(item.count || 0),
+    ]),
+  );
+
+  const dateKey = getDateKey();
+  const todayCounts = await Lead.aggregate([
+    {
+      $match: {
+        assignedTo: { $in: userIds },
+        assignmentSource: "AUTO",
+        deliveryStatus: "RELEASED",
+        assignedAt: { $exists: true },
+      },
+    },
+    {
+      $group: {
+        _id: {
+          userId: "$assignedTo",
+          day: {
+            $dateToString: {
+              date: "$assignedAt",
+              format: "%Y-%m-%d",
+              timezone: "Asia/Kolkata",
+            },
+          },
+        },
+        count: { $sum: 1 },
+      },
+    },
+    {
+      $match: {
+        "_id.day": dateKey,
+      },
+    },
+  ]);
+
+  const todayCountMap = new Map(
+    todayCounts.map((item: any) => [
+      String(item._id.userId),
+      Number(item.count || 0),
+    ]),
+  );
+
   res.json({
-    users: users.map((user: any) => ({
-      ...user,
-      assignedLeadCount: countMap.get(String(user._id)) || 0,
-    })),
+    users: users.map((user: any) => {
+      const bizProjId = user.businessProject?._id || user.businessProject;
+      const assignedToday =
+        todayCountMap.get(String(user._id)) ??
+        (user.autoLeadCountDate === dateKey
+          ? Number(user.autoLeadCount || 0)
+          : 0);
+      const limitVal = Math.max(0, Number(user.dailyLeadLimit ?? 5));
+      const remaining = Math.max(0, limitVal - assignedToday);
+      const atCapacity = assignedToday >= limitVal;
+
+      return {
+        ...user,
+        dailyLeadLimit: limitVal,
+        assignedToday,
+        remaining,
+        atCapacity,
+        assignedLeadCount:
+          user.role === "BUSINESS" && bizProjId
+            ? projectCountMap.get(String(bizProjId)) || 0
+            : countMap.get(String(user._id)) || 0,
+      };
+    }),
+    total,
+    page,
+    pages: Math.ceil(total / limit) || 1,
+    limit,
   });
 });
 
-/**
- * POST /api/users
- * Admin creates a salesperson account.
- */
-r.post("/", auth, roles("ADMIN"), async (req, res) => {
-  const { name, email, password } = req.body ?? {};
+r.post("/", auth, roles("ADMIN", "BUSINESS"), async (req, res) => {
+  const {
+    name,
+    email,
+    password,
+    role = "SALES",
+    business,
+    businessProject,
+    assignedProjects = [],
+    dailyLeadLimit,
+  } = req.body ?? {};
 
   if (!name?.trim() || !email?.trim() || !password) {
     return res.status(400).json({
@@ -58,6 +255,65 @@ r.post("/", auth, roles("ADMIN"), async (req, res) => {
     return res.status(400).json({
       message: "Password must be at least 8 characters",
     });
+  }
+
+  let finalRole: "SALES" | "BUSINESS" = "SALES";
+  let finalBusinessId: string | undefined = undefined;
+  let finalAssignedProjects: string[] = [];
+  let validatedProject: any = null;
+
+  if (req.user?.role === "BUSINESS") {
+    finalRole = "SALES";
+    let myBusinessId = req.user.business;
+    if (!myBusinessId) {
+      const me = await User.findById(req.user.id).select("business").lean();
+      myBusinessId = me?.business ? String(me.business) : undefined;
+    }
+    if (!myBusinessId) {
+      return res.status(400).json({ message: "No business profile associated with your account" });
+    }
+    finalBusinessId = myBusinessId;
+
+    const projectIds = Array.isArray(assignedProjects) ? assignedProjects.map(String) : [];
+    if (projectIds.length > 0) {
+      const count = await BusinessProject.countDocuments({
+        _id: { $in: projectIds },
+        business: myBusinessId,
+      });
+      if (count !== projectIds.length) {
+        return res.status(400).json({
+          message: "All assigned projects must belong to your business",
+        });
+      }
+      finalAssignedProjects = projectIds;
+    }
+  } else {
+    finalRole = role === "BUSINESS" ? "BUSINESS" : "SALES";
+
+    if (finalRole === "BUSINESS") {
+      if (business) {
+        const biz = await Business.findById(business);
+        if (!biz) return res.status(400).json({ message: "Invalid business selected" });
+        finalBusinessId = String(biz._id);
+      } else if (businessProject) {
+        validatedProject = await BusinessProject.findById(businessProject);
+        if (!validatedProject || !validatedProject.isActive) {
+          return res.status(400).json({
+            message: "The selected business project is invalid or not active",
+          });
+        }
+        finalBusinessId = validatedProject.business ? String(validatedProject.business) : undefined;
+      } else {
+        return res.status(400).json({
+          message: "A business must be selected for this business account",
+        });
+      }
+    } else {
+      if (business) finalBusinessId = String(business);
+      if (Array.isArray(assignedProjects) && assignedProjects.length > 0) {
+        finalAssignedProjects = assignedProjects.map(String);
+      }
+    }
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
@@ -73,26 +329,26 @@ r.post("/", auth, roles("ADMIN"), async (req, res) => {
     name: name.trim(),
     email: normalizedEmail,
     passwordHash,
-    role: "SALES",
+    role: finalRole,
+    business: finalBusinessId,
+    businessProject: validatedProject ? validatedProject._id : (finalAssignedProjects[0] || undefined),
+    assignedProjects: finalAssignedProjects,
     isActive: true,
-    dailyLeadLimit: 5,
+    dailyLeadLimit: finalRole === "BUSINESS" ? 0 : (Number(dailyLeadLimit) || 5),
   });
 
+  const populatedUser = await User.findById(user._id)
+    .select("-passwordHash")
+    .populate("business", "name contactNo leadLimit leadLimitType")
+    .populate("businessProject", "name stage reraNumber developerGroup")
+    .populate("assignedProjects", "name stage location reraNumber")
+    .lean();
+
   res.status(201).json({
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      isActive: user.isActive,
-    },
+    user: populatedUser,
   });
 });
 
-/**
- * PATCH /api/users/:id/capacity
- * Admin changes the automatic daily lead capacity for a salesperson.
- */
 r.patch("/:id/capacity", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const limit = Number(req.body?.dailyLeadLimit);
 
@@ -148,21 +404,126 @@ r.patch("/:id/capacity", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   res.json({ user });
 });
 
+/**
+ * PATCH /api/users/:id/status
+ * Admin blocks or unblocks a user account (restricts receiving leads & login).
+ */
+r.patch("/:id/status", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
+  const { isActive } = req.body ?? {};
+
+  if (typeof isActive !== "boolean") {
+    return res.status(400).json({ message: "isActive boolean is required" });
+  }
+
+  // Prevent admin from blocking themselves
+  if (req.user!.id === req.params.id && !isActive) {
+    return res.status(400).json({ message: "You cannot block your own account" });
+  }
+
+  const before = await User.findById(req.params.id).select("name email isActive role");
+  if (!before) return res.status(404).json({ message: "User not found" });
+
+  const user = await User.findByIdAndUpdate(
+    req.params.id,
+    { $set: { isActive } },
+    { new: true },
+  ).select("-passwordHash");
+
+  await logAudit({
+    actor: req.user!.id,
+    action: isActive ? "USER_UNBLOCKED" : "USER_BLOCKED",
+    entity: "User",
+    entityId: user!.id,
+    before: { isActive: before.isActive },
+    after: { isActive: user!.isActive },
+    ip: req.ip,
+  });
+
+  const io = req.app.get("io");
+  if (io) {
+    io.to("role:ADMIN").emit("user_status_changed", {
+      userId: user!.id,
+      isActive: user!.isActive,
+    });
+    io.to(`user:${user!.id}`).emit("user_status_changed", {
+      userId: user!.id,
+      isActive: user!.isActive,
+    });
+  }
+
+  res.json({
+    user,
+    message: isActive ? "User unblocked successfully" : "User blocked successfully",
+  });
+});
 
 /**
  * GET /api/users/me
  * Return the current user's editable profile.
  */
 r.get("/me", auth, async (req, res) => {
-  const user = await User.findById(req.user!.id).select("name email role isActive dailyLeadLimit profilePhotoUrl");
+  const user = await User.findById(req.user!.id)
+    .select("name email role isActive dailyLeadLimit profilePhotoUrl businessProject")
+    .populate("businessProject", "name stage developerGroup reraNumber");
   if (!user) return res.status(404).json({ message: "User not found" });
   res.json({ user });
 });
 
 /**
- * PATCH /api/users/me
- * Users may update their display name; email is intentionally immutable here.
+ * PATCH /api/users/:id/status
+ * Admin blocks or unblocks a user account (restricts receiving leads & login).
  */
+/**
+ * PATCH /api/users/:id/assigned-projects
+ * Admin or Business partner updates project assignments for a salesperson.
+ */
+r.patch("/:id/assigned-projects", auth, roles("ADMIN", "BUSINESS"), async (req, res) => {
+  const { assignedProjects = [] } = req.body ?? {};
+  if (!Array.isArray(assignedProjects)) {
+    return res.status(400).json({ message: "assignedProjects must be an array of project IDs" });
+  }
+
+  const targetUser = await User.findById(req.params.id);
+  if (!targetUser || targetUser.role !== "SALES") {
+    return res.status(404).json({ message: "Salesperson not found" });
+  }
+
+  if (req.user?.role === "BUSINESS") {
+    let myBusinessId = req.user.business;
+    if (!myBusinessId) {
+      const me = await User.findById(req.user.id).select("business").lean();
+      myBusinessId = me?.business ? String(me.business) : undefined;
+    }
+    if (String(targetUser.business) !== String(myBusinessId)) {
+      return res.status(403).json({ message: "Cannot modify salesperson outside your business" });
+    }
+    if (assignedProjects.length > 0) {
+      const count = await BusinessProject.countDocuments({
+        _id: { $in: assignedProjects },
+        business: myBusinessId,
+      });
+      if (count !== assignedProjects.length) {
+        return res.status(400).json({ message: "All projects must belong to your business" });
+      }
+    }
+  }
+
+  targetUser.assignedProjects = assignedProjects as any;
+  if (assignedProjects.length > 0 && !targetUser.businessProject) {
+    targetUser.businessProject = assignedProjects[0] as any;
+  }
+  await targetUser.save();
+
+  const populated = await User.findById(targetUser._id)
+    .select("-passwordHash")
+    .populate("business", "name contactNo leadLimit leadLimitType")
+    .populate("businessProject", "name stage reraNumber developerGroup")
+    .populate("assignedProjects", "name stage location reraNumber")
+    .lean();
+
+  res.json({ user: populated });
+});
+
 r.patch("/me", auth, async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
   if (!name) return res.status(400).json({ message: "Name is required" });
@@ -173,7 +534,7 @@ r.patch("/me", auth, async (req, res) => {
     req.user!.id,
     { $set: { name } },
     { new: true },
-  ).select("name email role isActive dailyLeadLimit profilePhotoUrl");
+  ).select("name email role isActive dailyLeadLimit profilePhotoUrl businessProject");
 
   if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -193,6 +554,9 @@ r.patch("/me", auth, async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      business: user.business ? String(user.business) : undefined,
+      assignedProjects: Array.isArray(user.assignedProjects) ? user.assignedProjects.map(String) : [],
+      businessProject: user.businessProject ? String(user.businessProject) : undefined,
     },
     env.JWT_SECRET,
     { expiresIn: env.JWT_EXPIRES_IN as any },
@@ -200,7 +564,6 @@ r.patch("/me", auth, async (req, res) => {
 
   res.json({ user, token });
 });
-
 
 /**
  * POST /api/users/me/profile-photo/upload-url

@@ -17,7 +17,33 @@ export default function Audit() {
         subtitle="A durable record of important CRM changes."
       />
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
+        {/* Mobile Card View (< lg) */}
+        <div className="block lg:hidden divide-y divide-slate-100">
+          {rows.map((a) => (
+            <div key={a._id} className="p-4 space-y-2 bg-white">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <b className="text-slate-900 block text-xs font-bold">{a.action}</b>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    {a.entity} · {a.entityId?.slice(-8)}
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400">
+                  {new Date(a.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-2.5 text-xs">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">By: {a.actor?.name || "System"}</span>
+                <p className="mt-1 font-mono text-[10px] text-slate-600 break-all">
+                  {JSON.stringify(a.before || {})} → {JSON.stringify(a.after || {})}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop Table View (>= lg) */}
+        <div className="hidden lg:block overflow-x-auto">
           <table className="min-w-[900px] w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500">
               <tr>

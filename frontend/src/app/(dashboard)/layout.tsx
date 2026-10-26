@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import RealtimeToast from "../../components/Toast";
+import { NavProvider } from "../../lib/nav";
 
 export default function DashboardLayout({
   children,
@@ -30,30 +31,18 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-slate-50">
-      {/* Fixed Left Sidebar */}
-      <Sidebar />
+    <NavProvider>
+      <div className="flex h-screen w-full overflow-hidden bg-slate-50">
+        {/* Responsive Sidebar (Slide-over drawer on < md, static fixed on >= md) */}
+        <Sidebar />
 
-      {/* Scrollable Content Area */}
-      <main
-        className="
-          fixed inset-y-0 right-0
-          left-[68px]
-          h-screen
-          overflow-x-hidden
-          overflow-y-auto
-          overscroll-contain
-          px-3 py-4
-          sm:px-5
-          md:left-60
-          md:px-7 md:py-7
-          lg:px-9
-        "
-      >
-        <div className="mx-auto w-full max-w-[1800px]">{children}</div>
-      </main>
+        {/* Main Content Area (takes remaining width, naturally scrolls vertically) */}
+        <main className="flex-1 h-full min-w-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 sm:px-5 sm:py-5 md:px-7 md:py-7 lg:px-9">
+          <div className="mx-auto w-full max-w-[1800px]">{children}</div>
+        </main>
 
-      <RealtimeToast />
-    </div>
+        <RealtimeToast />
+      </div>
+    </NavProvider>
   );
 }

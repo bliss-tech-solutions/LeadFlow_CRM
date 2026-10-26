@@ -2,13 +2,18 @@ export type User = {
   id: string;
   name: string;
   email: string;
-  role: "ADMIN" | "MANAGER" | "SALES";
+  role: "ADMIN" | "MANAGER" | "SALES" | "BUSINESS";
   profilePhotoUrl?: string;
+  business?: string | { _id: string; name: string; contactNo?: string; leadLimit?: number; leadLimitType?: string; detail?: string };
+  assignedProjects?: Array<string | { _id: string; name: string; stage?: string; location?: string; reraNumber?: string }>;
+  businessProject?: string | { _id: string; name: string; stage?: string; developerGroup?: string; reraNumber?: string };
 };
+
 export function saveSession(token: string, user: User) {
   localStorage.setItem("leadflow_token", token);
   localStorage.setItem("leadflow_user", JSON.stringify(user));
 }
+
 export function getUser(): User | null {
   try {
     const v = localStorage.getItem("leadflow_user");
@@ -17,6 +22,7 @@ export function getUser(): User | null {
     return null;
   }
 }
+
 export function logout() {
   if (typeof window === "undefined") return;
 
