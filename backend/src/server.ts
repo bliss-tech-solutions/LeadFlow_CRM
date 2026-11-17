@@ -27,6 +27,7 @@ import businessProjectRoutes from "./routes/businessProjects";
 import leadDeliveryRoutes from "./routes/leadDelivery";
 import { releaseHeldLeads } from "./services/leadDelivery.service";
 import { processFollowupReminders } from "./services/followupReminder.service";
+import { startKeepAliveService } from "./services/keepAlive.service";
 
 import { Request, Response, NextFunction } from "express";
 
@@ -107,14 +108,16 @@ app.use(
 // Request logger
 app.use(requestLogger);
 
-// Health
-app.get("/health", (_req, res) =>
+// Health check endpoint (both /health and /api/health)
+const healthHandler = (_req: Request, res: Response) =>
   res.json({
     ok: true,
     service: "leadflow-crm-api",
     time: new Date().toISOString(),
-  }),
-);
+  });
+
+app.get("/health", healthHandler);
+app.get("/api/health", healthHandler);
 
 // Routes
 app.use("/api/auth", authRoutes);
@@ -173,6 +176,9 @@ connectDB()
         environment: process.env.NODE_ENV,
       });
 
+      // Start 9-minute background keep-alive service to prevent hosting cold sleep
+      startKeepAliveService();
+
       // Check every 30 seconds so held leads are released within the next minute.
       const release = () => {
         releaseHeldLeads(io).catch((error) => {
@@ -225,4 +231,3 @@ const shutdown = (signal: string) => {
 
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 process.once("SIGINT", () => shutdown("SIGINT"));
-  

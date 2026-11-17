@@ -374,32 +374,86 @@ export async function ingestMetaLead(
 
   /**
    * Match Meta source IDs to an admin-configured business project.
-   * Matches by formId, pageId, formName, or pageName.
+   * Matches by formId, pageId, formName, or pageName with case-insensitivity and trimming,
+   * with fallbacks to project name matching and cohort matching.
    */
-  const orConditions: any[] = [];
-  if (data.meta?.formId) orConditions.push({ formId: data.meta.formId });
-  if (data.meta?.pageId) orConditions.push({ pageId: data.meta.pageId });
-  if (data.meta?.formName) orConditions.push({ formName: data.meta.formName });
-  if (data.formName) orConditions.push({ formName: data.formName });
-  if (data.meta?.pageName) orConditions.push({ pageName: data.meta.pageName });
+  const cleanStr = (s?: any) => (s ? String(s).trim().toLowerCase() : "");
+  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  const project = orConditions.length > 0 ? await BusinessProject.findOne({
+  const leadFormId = data.meta?.formId ? String(data.meta.formId).trim() : "";
+  const leadPageId = data.meta?.pageId ? String(data.meta.pageId).trim() : "";
+  const leadFormName = (data.meta?.formName || data.formName) ? String(data.meta?.formName || data.formName).trim() : "";
+  const leadPageName = data.meta?.pageName ? String(data.meta.pageName).trim() : "";
+  const leadCampaign = data.campaign ? String(data.campaign).trim() : "";
+
+  const orConditions: any[] = [];
+  if (leadFormId) orConditions.push({ formId: leadFormId });
+  if (leadPageId) orConditions.push({ pageId: leadPageId });
+  if (leadFormName) orConditions.push({ formName: { $regex: `^${escapeRegex(leadFormName)}$`, $options: "i" } });
+  if (leadPageName) orConditions.push({ pageName: { $regex: `^${escapeRegex(leadPageName)}$`, $options: "i" } });
+
+  let project = orConditions.length > 0 ? await BusinessProject.findOne({
     isActive: true,
     metaSources: {
       $elemMatch: {
         $or: orConditions,
       },
     },
-  }).select("_id name business metaSources") : null;
+  }).select("_id name business metaSources").populate("business", "name status") : null;
+
+  // Fallback 1: Partial project name or business name match against campaign or formName
+  if (!project) {
+    const allProjects = await BusinessProject.find({ isActive: true })
+      .select("_id name business metaSources")
+      .populate("business", "name status")
+      .lean();
+
+    for (const p of allProjects) {
+      const pName = cleanStr(p.name);
+      const bName = cleanStr((p.business as any)?.name);
+      const camp = cleanStr(leadCampaign);
+      const fn = cleanStr(leadFormName);
+
+      if (pName && pName.length >= 3) {
+        if ((camp && (camp.includes(pName) || pName.includes(camp))) || (fn && (fn.includes(pName) || pName.includes(fn)))) {
+          project = p as any;
+          break;
+        }
+      }
+      if (bName && bName.length >= 3) {
+        if ((camp && (camp.includes(bName) || bName.includes(camp))) || (fn && (fn.includes(bName) || bName.includes(fn)))) {
+          project = p as any;
+          break;
+        }
+      }
+    }
+  }
+
+  // Fallback 2: Check cohort - did another lead with the same campaign or form match a project?
+  if (!project && (leadCampaign || leadFormName || leadFormId)) {
+    const prevLead = await Lead.findOne({
+      businessProject: { $ne: null },
+      $or: [
+        ...(leadFormId ? [{ "meta.formId": leadFormId }] : []),
+        ...(leadFormName ? [{ formName: leadFormName }, { "meta.formName": leadFormName }] : []),
+        ...(leadCampaign ? [{ campaign: leadCampaign }] : []),
+      ],
+    }).select("businessProject").lean();
+
+    if (prevLead?.businessProject) {
+      project = await BusinessProject.findById(prevLead.businessProject)
+        .select("_id name business metaSources")
+        .populate("business", "name status") as any;
+    }
+  }
 
   if (project) {
-    data.meta.businessId = project.id;
+    data.meta.businessId = String(project._id || project.id);
     const matchedSource = (project as any).metaSources?.find((m: any) =>
-      (data.meta?.formId && m.formId === data.meta.formId) ||
-      (data.meta?.pageId && m.pageId === data.meta.pageId) ||
-      (data.meta?.formName && m.formName === data.meta.formName) ||
-      (data.formName && m.formName === data.formName) ||
-      (data.meta?.pageName && m.pageName === data.meta.pageName)
+      (leadFormId && m.formId === leadFormId) ||
+      (leadPageId && m.pageId === leadPageId) ||
+      (leadFormName && cleanStr(m.formName) === cleanStr(leadFormName)) ||
+      (leadPageName && cleanStr(m.pageName) === cleanStr(leadPageName))
     );
     if (matchedSource) {
       if (!data.meta.pageName && matchedSource.pageName) data.meta.pageName = matchedSource.pageName;

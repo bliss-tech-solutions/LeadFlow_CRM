@@ -118,7 +118,7 @@ export default function Topbar({
           type="button"
           onClick={() => setMobileOpen(true)}
           aria-label="Open navigation menu"
-          className="grid h-9 w-9 sm:h-10 sm:w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 md:hidden transition"
+          className="grid h-9 w-9 sm:h-10 sm:w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 lg:hidden transition"
         >
           <Menu size={18} />
         </button>

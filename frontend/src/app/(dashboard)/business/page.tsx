@@ -118,7 +118,7 @@ export default function BusinessPage() {
   const [passwordError, setPasswordError] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState("");
 
-  async function loadBusinesses(p = page, q = search) {
+  async function loadBusinesses(p = page, q = search, s = statusFilter) {
     try {
       setLoading(true);
       setError("");
@@ -127,6 +127,8 @@ export default function BusinessPage() {
         limit: "15",
       });
       if (q.trim()) params.set("search", q.trim());
+      if (s && s !== "ALL") params.set("status", s);
+      else params.set("status", "ALL");
 
       const data = await api(`/businesses?${params.toString()}`);
       setBusinesses(data.businesses || []);
@@ -145,10 +147,10 @@ export default function BusinessPage() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void loadBusinesses(page, search);
+      void loadBusinesses(page, search, statusFilter);
     }, 300);
     return () => clearTimeout(timer);
-  }, [page, search]);
+  }, [page, search, statusFilter]);
 
   // Aggregate stats across loaded businesses
   const stats = useMemo(() => {
@@ -269,7 +271,7 @@ export default function BusinessPage() {
       });
 
       setEditingBusiness(null);
-      await loadBusinesses(page, search);
+      await loadBusinesses(page, search, statusFilter);
     } catch (err: any) {
       setEditError(err?.message || "Failed to update business.");
     } finally {
@@ -312,7 +314,7 @@ export default function BusinessPage() {
       });
 
       setConfigLoginBusiness(null);
-      await loadBusinesses(page, search);
+      await loadBusinesses(page, search, statusFilter);
     } catch (err: any) {
       setConfigLoginError(err?.message || "Failed to configure business login.");
     } finally {

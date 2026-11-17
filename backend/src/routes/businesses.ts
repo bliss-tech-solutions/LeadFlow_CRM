@@ -6,6 +6,10 @@ import bcrypt from "bcryptjs";
 import { User } from "../models/User";
 import { auth, roles } from "../middleware/auth";
 import { logAudit } from "../utils/activity";
+import {
+  holdBusinessLeads,
+  releaseBusinessHeldLeads,
+} from "../services/leadDelivery.service";
 
 const r = Router();
 
@@ -18,9 +22,12 @@ function isAdmin(req: any) {
  * List businesses with project counts and lead counts.
  */
 r.get("/", auth, async (req, res) => {
-  const filter: Record<string, unknown> = { isActive: true };
+  const filter: Record<string, unknown> = {};
+
+  const { search = "", status = "ALL", page = "1", limit = "20" } = req.query as Record<string, string>;
 
   if (req.user?.role === "BUSINESS") {
+    filter.isActive = true;
     if (req.user.business) {
       filter._id = req.user.business;
     } else if (req.user.businessProject) {
@@ -30,9 +37,18 @@ r.get("/", auth, async (req, res) => {
         filter._id = proj.business;
       }
     }
+  } else if (!isAdmin(req)) {
+    filter.isActive = true;
+  } else {
+    // Admin / Manager status filtering
+    if (status === "ACTIVE") {
+      filter.isActive = true;
+    } else if (status === "INACTIVE") {
+      filter.isActive = false;
+    }
+    // "ALL" leaves filter.isActive undefined so both active and inactive are included
   }
 
-  const { search = "", page = "1", limit = "20" } = req.query as Record<string, string>;
   const querySearch = String(search).trim();
   if (querySearch) {
     filter.$or = [
@@ -191,7 +207,11 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
 r.get("/:id", auth, async (req, res) => {
   const business = await Business.findById(req.params.id).lean();
 
-  if (!business || !business.isActive) {
+  if (!business) {
+    return res.status(404).json({ message: "Business not found." });
+  }
+
+  if (!business.isActive && !isAdmin(req)) {
     return res.status(404).json({ message: "Business not found." });
   }
 
@@ -237,11 +257,16 @@ r.get("/:id", auth, async (req, res) => {
 /**
  * PATCH /api/businesses/:id
  * Update business details or limits.
+ * Toggling active/inactive holds or releases leads for this business.
  */
 r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
   const business = await Business.findById(req.params.id);
 
-  if (!business || !business.isActive) {
+  if (!business) {
+    return res.status(404).json({ message: "Business not found." });
+  }
+
+  if (!business.isActive && !isAdmin(req)) {
     return res.status(404).json({ message: "Business not found." });
   }
 
@@ -263,6 +288,7 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) =>
   if (contactNo !== undefined) business.contactNo = String(contactNo).trim();
 
   // Only admin can change lead limits or active status
+  let statusChangedTo: boolean | null = null;
   if (isAdmin(req)) {
     if (leadLimit !== undefined) {
       business.leadLimit = Math.max(0, Number(leadLimit) || 0);
@@ -270,8 +296,12 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) =>
     if (leadLimitType !== undefined && ["DAILY", "MONTHLY", "NONE"].includes(leadLimitType)) {
       business.leadLimitType = leadLimitType;
     }
-    if (isActive !== undefined) {
-      business.isActive = Boolean(isActive);
+    if (isActive !== undefined && typeof isActive === "boolean") {
+      const willBeActive = Boolean(isActive);
+      if (business.isActive !== willBeActive) {
+        business.isActive = willBeActive;
+        statusChangedTo = willBeActive;
+      }
     }
   }
 
@@ -286,12 +316,27 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) =>
     after: business.toObject(),
   });
 
-  res.json({ business });
+  // If status changed to inactive -> hold leads; if changed to active -> release held leads
+  const io = req.app.get("io");
+  let holdResult: any = null;
+  let releaseResult: any = null;
+
+  if (statusChangedTo === false) {
+    holdResult = await holdBusinessLeads(business._id, io);
+  } else if (statusChangedTo === true) {
+    releaseResult = await releaseBusinessHeldLeads(business._id, io);
+  }
+
+  res.json({
+    business,
+    holdResult: holdResult || undefined,
+    releaseResult: releaseResult || undefined,
+  });
 });
 
 /**
  * DELETE /api/businesses/:id
- * Soft-delete business.
+ * Soft-delete business and hold all open leads.
  */
 r.delete("/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const business = await Business.findById(req.params.id);
@@ -312,7 +357,13 @@ r.delete("/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     after: { isActive: false },
   });
 
-  res.json({ message: "Business deactivated successfully." });
+  const io = req.app.get("io");
+  const holdResult = await holdBusinessLeads(business._id, io);
+
+  res.json({
+    message: "Business deactivated successfully.",
+    holdResult,
+  });
 });
 
 /**
@@ -426,4 +477,3 @@ r.patch("/:id/admin-password", auth, roles("ADMIN", "MANAGER", "BUSINESS"), asyn
 });
 
 export default r;
-

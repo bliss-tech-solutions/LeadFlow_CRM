@@ -13,6 +13,7 @@ import {
 } from "../services/s3.service";
 import { env } from "../config/env";
 import { Notification } from "../models/Notification";
+import { remapUnmappedLeads } from "../services/leadRemap.service";
 
 const r = Router();
 
@@ -299,6 +300,7 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     .populate("business", "name detail contactNo leadLimit leadLimitType")
     .lean();
 
+  void remapUnmappedLeads();
   res.status(201).json({ project: populated });
 });
 
@@ -328,6 +330,7 @@ r.patch("/:id/stage", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, r
 
   project.updatedBy = req.user!.id as any;
   await project.save();
+  void remapUnmappedLeads();
 
   await logAudit({
     actor: req.user!.id,
@@ -434,6 +437,7 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
 
   project.updatedBy = req.user!.id as any;
   await project.save();
+  void remapUnmappedLeads();
 
   res.json({ project });
 });
@@ -519,6 +523,7 @@ r.post("/:id/documents", auth, async (req, res) => {
   project.documentsSetupSkipped = false;
   project.updatedBy = req.user!.id as any;
   await project.save();
+  void remapUnmappedLeads();
 
   await logAudit({
     actor: req.user!.id,
@@ -649,6 +654,7 @@ r.delete(
     ) as any;
     project.updatedBy = req.user!.id as any;
     await project.save();
+  void remapUnmappedLeads();
 
     await logAudit({
       actor: req.user!.id,

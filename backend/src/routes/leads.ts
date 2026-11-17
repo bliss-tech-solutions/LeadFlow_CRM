@@ -9,6 +9,7 @@ import { BusinessProject } from "../models/BusinessProject";
 import { auth, roles } from "../middleware/auth";
 import { logActivity, logAudit } from "../utils/activity";
 import { Notification } from "../models/Notification";
+import { remapUnmappedLeads } from "../services/leadRemap.service";
 
 const r = Router();
 
@@ -221,8 +222,12 @@ r.get("/", auth, async (req, res) => {
   const [leads, total] = await Promise.all([
     Lead.find(q)
       .populate("assignedTo", "name email")
-      .populate("businessProject", "name stage documents products")
-      .sort({ updatedAt: -1 })
+      .populate({
+        path: "businessProject",
+        select: "name stage documents products business",
+        populate: { path: "business", select: "name contactNo email status" },
+      })
+      .sort({ createdAt: -1 })
       .skip((p - 1) * l)
       .limit(l),
     Lead.countDocuments(q),
@@ -279,7 +284,7 @@ r.get("/export", auth, async (req, res) => {
   const leads = await Lead.find(q)
     .populate("assignedTo", "name email")
     .populate({ path: "businessProject", select: "name stage location reraNumber business", populate: { path: "business", select: "name contactNo" } })
-    .sort({ updatedAt: -1 })
+    .sort({ createdAt: -1 })
     .limit(5000)
     .lean();
 
@@ -348,7 +353,10 @@ r.get("/export", auth, async (req, res) => {
       name: l.name || "Unnamed lead",
       phone: l.phone || "",
       email: l.email || "",
-      business: l.businessProject?.name || l.meta?.businessId || "Unmapped",
+      business:
+        (l.businessProject as any)?.business?.name && (l.businessProject as any)?.name
+          ? `${(l.businessProject as any).name} (${(l.businessProject as any).business.name})`
+          : (l.businessProject as any)?.name || (l.businessProject as any)?.business?.name || l.meta?.businessId || "Unmapped",
       status: l.status || "NEW",
       contactStatus: l.contactStatus || "",
       assignedTo: l.assignedTo?.name || "Unassigned",
@@ -713,6 +721,20 @@ r.post("/:id/followups", auth, async (req, res) => {
   }
 
   res.status(201).json({ followUp: populatedFollowup ?? f });
+});
+
+/**
+ * POST /api/leads/remap
+ * Admin manually triggers remapping of all unmapped leads to matching business projects.
+ */
+r.post("/remap", auth, roles("ADMIN"), async (_req, res) => {
+  const result = await remapUnmappedLeads();
+  res.json({
+    success: true,
+    remappedCount: result.remappedCount,
+    scannedCount: result.scannedCount,
+    message: `Successfully remapped ${result.remappedCount} of ${result.scannedCount} unmapped leads.`,
+  });
 });
 
 export default r;

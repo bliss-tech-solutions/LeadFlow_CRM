@@ -6,7 +6,16 @@ import Topbar from "../../../components/Topbar";
 import Pagination from "../../../components/Pagination";
 import { api, downloadFile } from "../../../lib/api";
 import { getUser } from "../../../lib/auth";
-import { ExternalLink, Search, PauseCircle, X, Download, Loader2, UserRound } from "lucide-react";
+import {
+  ExternalLink,
+  Search,
+  PauseCircle,
+  X,
+  Download,
+  Loader2,
+  UserRound,
+  Sparkles,
+} from "lucide-react";
 
 const statuses = [
   "NEW",
@@ -31,14 +40,36 @@ const statusStyles: Record<string, string> = {
 };
 
 const EXCLUDED_TABLE_KEYS = new Set([
-  "full_name", "name", "first_name", "last_name",
-  "email", "phone_number", "phone", "contact",
-  "lead_id", "leadgen_id", "id",
-  "page_id", "page_name", "form_id", "form_name",
-  "ad_id", "ad_name", "adset_id", "ad_set_id", "adgroup_id",
-  "campaign_id", "campaign_name", "campaign",
-  "ad_account_id", "ad_account_name",
-  "created_at", "created_time", "platform", "raw_body", "form_data"
+  "full_name",
+  "name",
+  "first_name",
+  "last_name",
+  "email",
+  "phone_number",
+  "phone",
+  "contact",
+  "lead_id",
+  "leadgen_id",
+  "id",
+  "page_id",
+  "page_name",
+  "form_id",
+  "form_name",
+  "ad_id",
+  "ad_name",
+  "adset_id",
+  "ad_set_id",
+  "adgroup_id",
+  "campaign_id",
+  "campaign_name",
+  "campaign",
+  "ad_account_id",
+  "ad_account_name",
+  "created_at",
+  "created_time",
+  "platform",
+  "raw_body",
+  "form_data",
 ]);
 
 function formatFieldName(value: string) {
@@ -49,7 +80,9 @@ function formatFieldName(value: string) {
 
 function formatFieldValue(val: any): string {
   if (val === null || val === undefined) return "";
-  let str = Array.isArray(val) ? val.filter((v) => v !== null && v !== undefined).map(String).join(", ") : String(val);
+  let str = Array.isArray(val)
+    ? val.filter((v) => v !== null && v !== undefined).map(String).join(", ")
+    : String(val);
   str = str.trim();
   if (!str || str.startsWith("{{") || str.toLowerCase() === "null") return "";
   if (str.includes("_") && !str.startsWith("http")) str = str.replaceAll("_", " ");
@@ -88,6 +121,15 @@ function dynamicLeadFields(lead: any) {
   return result.slice(0, 3);
 }
 
+function getBusinessProjectDisplay(l: any): string {
+  const projName = l.businessProject?.name;
+  const bizName = l.businessProject?.business?.name;
+  if (projName && bizName && projName !== bizName) {
+    return `${projName} (${bizName})`;
+  }
+  return projName || bizName || l.meta?.businessId || "Unmapped";
+}
+
 export default function Leads() {
   const currentUser = getUser();
   const isAdmin = currentUser?.role === "ADMIN";
@@ -110,6 +152,8 @@ export default function Leads() {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [remapping, setRemapping] = useState(false);
+  const [remapMsg, setRemapMsg] = useState("");
 
   useEffect(() => {
     api("/business-projects?limit=100")
@@ -154,7 +198,7 @@ export default function Leads() {
         body: JSON.stringify({ userId: selectedUserId }),
       });
       closeAssignModal();
-      void load(page, q, status, businessProject);
+      void load(page, q, status, businessProject, selectedBusiness);
     } catch (err: any) {
       setAssignError(err?.message || "Failed to assign lead");
     } finally {
@@ -219,6 +263,22 @@ export default function Leads() {
     }
   }
 
+  async function handleRemap() {
+    setRemapping(true);
+    setRemapMsg("");
+    try {
+      const res = await api("/leads/remap", { method: "POST" });
+      setRemapMsg(res.message || `Remapped ${res.remappedCount} leads.`);
+      await load(page, q, status, businessProject, selectedBusiness);
+      setTimeout(() => setRemapMsg(""), 6000);
+    } catch (err: any) {
+      setRemapMsg(err?.message || "Failed to remap leads");
+      setTimeout(() => setRemapMsg(""), 6000);
+    } finally {
+      setRemapping(false);
+    }
+  }
+
   function clearAllFilters() {
     setQ("");
     setStatus("");
@@ -232,7 +292,7 @@ export default function Leads() {
     <div className="space-y-5">
       <Topbar
         title="Leads"
-        subtitle="Released leads, ownership, source mapping and next action. Sorted by latest update."
+        subtitle="Released leads, ownership, source mapping and next action. Sorted by lead created time."
       />
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center gap-2.5 border-b border-slate-100 p-3 sm:p-4">
@@ -276,7 +336,12 @@ export default function Leads() {
           >
             <option value="">All Projects</option>
             {projects
-              .filter((p) => !selectedBusiness || p.business?._id === selectedBusiness || p.business === selectedBusiness)
+              .filter(
+                (p) =>
+                  !selectedBusiness ||
+                  p.business?._id === selectedBusiness ||
+                  p.business === selectedBusiness,
+              )
               .map((p) => (
                 <option key={p._id} value={p._id}>
                   {p.name}
@@ -290,7 +355,9 @@ export default function Leads() {
             className="h-10 w-full sm:w-auto rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none"
           >
             <option value="">All statuses</option>
-            {statuses.map((s) => <option key={s}>{s}</option>)}
+            {statuses.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
           </select>
 
           {hasActiveFilters && (
@@ -302,7 +369,24 @@ export default function Leads() {
             </button>
           )}
 
-          <div className="w-full sm:w-auto sm:ml-auto flex items-center justify-end gap-3">
+          <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={handleRemap}
+                disabled={remapping}
+                className="inline-flex h-10 w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 text-xs font-semibold text-indigo-700 shadow-xs transition hover:bg-indigo-100 disabled:opacity-50"
+                title="Automatically scan and link unmapped leads to matching business projects"
+              >
+                {remapping ? (
+                  <Loader2 size={14} className="animate-spin text-indigo-600" />
+                ) : (
+                  <Sparkles size={14} className="text-indigo-600" />
+                )}
+                {remapping ? "Remapping..." : "Remap Leads"}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleDownload}
@@ -320,6 +404,15 @@ export default function Leads() {
           </div>
         </div>
 
+        {remapMsg && (
+          <div className="flex items-center justify-between border-b border-indigo-100 bg-indigo-50 px-4 py-2 text-xs text-indigo-800">
+            <span>{remapMsg}</span>
+            <button onClick={() => setRemapMsg("")} className="text-indigo-400 hover:text-indigo-700">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         {downloadError && (
           <div className="flex items-center justify-between border-b border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700">
             <span>{downloadError}</span>
@@ -336,19 +429,35 @@ export default function Leads() {
                 !
               </span>
               <span>
-                <strong>Reminder:</strong> You have unassigned {leads.filter((l) => !l.assignedTo || !l.assignedTo?._id).length === 1 ? "lead" : "leads"} on this page. Assign them to a salesperson to start follow-ups.
+                <strong>Reminder:</strong> You have unassigned{" "}
+                {leads.filter((l) => !l.assignedTo || !l.assignedTo?._id).length === 1
+                  ? "lead"
+                  : "leads"}{" "}
+                on this page. Assign them to a salesperson to start follow-ups.
               </span>
             </div>
           </div>
         )}
 
-        {/* Mobile & Tablet Card View (< lg: vertical cards, no horizontal scrolling) */}
+        {/* Mobile & Tablet Card View (< lg: compact cards with main details only) */}
         <div className="block lg:hidden divide-y divide-slate-100">
           {leads.map((l) => {
-            const extras = dynamicLeadFields(l);
+            const businessDisplay = getBusinessProjectDisplay(l);
+            const createdDateStr = l.createdAt
+              ? new Date(l.createdAt).toLocaleDateString(undefined, {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })
+              : "—";
             const isUnassigned = !l.assignedTo || !l.assignedTo?._id;
+
             return (
-              <div key={l._id} className="p-4 space-y-3 bg-white hover:bg-slate-50/60 transition">
+              <div
+                key={l._id}
+                className="p-3.5 sm:p-4 space-y-2.5 bg-white hover:bg-slate-50/70 transition"
+              >
+                {/* Header: Lead Name + Status Badge */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <Link
@@ -361,38 +470,29 @@ export default function Leads() {
                       {l.phone || l.email || "No contact details"}
                     </span>
                   </div>
-                  <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold shrink-0 ring-1 ${statusStyles[l.status] || "bg-slate-100 text-slate-600 ring-slate-200"}`}>
+                  <span
+                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold shrink-0 ring-1 ${
+                      statusStyles[l.status] || "bg-slate-100 text-slate-600 ring-slate-200"
+                    }`}
+                  >
                     {String(l.status || "NEW").replaceAll("_", " ")}
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded-xl bg-slate-50 p-2.5">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Business</span>
-                    <span className="font-semibold text-slate-800 truncate block mt-0.5">
-                      {l.businessProject?.name || l.meta?.businessId || "Unmapped"}
-                    </span>
+                {/* Main Details: Project / Business badge + Created Date */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-slate-700 max-w-[220px] sm:max-w-[280px]">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Project:</span>
+                    <span className="font-semibold truncate">{businessDisplay}</span>
                   </div>
-                  <div className="rounded-xl bg-slate-50 p-2.5">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Source</span>
-                    <span className="font-semibold text-slate-800 truncate block mt-0.5">
-                      {l.source || "—"}{l.campaign ? ` · ${l.campaign}` : ""}
-                    </span>
-                  </div>
+
+                  <span className="text-[11px] text-slate-400 shrink-0">
+                    Created: <strong className="text-slate-600">{createdDateStr}</strong>
+                  </span>
                 </div>
 
-                {extras.length > 0 && (
-                  <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-2.5 text-xs space-y-1">
-                    {extras.map((item) => (
-                      <div key={item.name} className="flex justify-between items-baseline gap-2 py-0.5">
-                        <span className="text-[11px] font-medium text-slate-500 truncate">{item.name}:</span>
-                        <span className="text-[11px] font-semibold text-slate-800 text-right truncate">{item.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100/80">
+                {/* Footer: Salesperson Assignment + View Details Action */}
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
                   <div className="flex items-center gap-1.5 min-w-0">
                     {l.assignedTo?.name ? (
                       <span className="text-xs text-slate-600 truncate">
@@ -410,16 +510,13 @@ export default function Leads() {
                     ) : (
                       <span className="text-xs font-medium text-amber-600">Unassigned</span>
                     )}
-                    <span className="text-[10px] text-slate-400 ml-1">
-                      {new Date(l.updatedAt || l.createdAt).toLocaleDateString()}
-                    </span>
                   </div>
 
                   <Link
                     href={`/leads/${l._id}`}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 shrink-0"
+                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shrink-0 transition"
                   >
-                    Details <ExternalLink size={12} />
+                    View Details <ExternalLink size={12} />
                   </Link>
                 </div>
               </div>
@@ -432,22 +529,22 @@ export default function Leads() {
           <table className="min-w-[1000px] w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
-                {["Lead", "Business", "Source / Campaign", "Extra details", "Status", "Assigned", "Updated", ""].map((x) => (
+                {["Lead", "Business", "Source / Campaign", "Extra details", "Status", "Assigned", "Created", ""].map((x) => (
                   <th key={x} className="px-5 py-3 font-semibold">{x}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {leads.map((l) => {
-                const extras = dynamicLeadFields(l);
                 const isUnassigned = !l.assignedTo || !l.assignedTo?._id;
+                const extras = dynamicLeadFields(l);
                 return (
                   <tr key={l._id} className="border-t border-slate-100 hover:bg-slate-50/70">
                     <td className="px-5 py-4">
                       <b className="text-slate-900">{l.name || "Unnamed lead"}</b>
                       <span className="mt-1 block text-[10px] text-slate-400">{l.phone || l.email || "No contact details"}</span>
                     </td>
-                    <td className="px-5 py-4">{l.businessProject?.name || l.meta?.businessId || "Unmapped"}</td>
+                    <td className="px-5 py-4">{getBusinessProjectDisplay(l)}</td>
                     <td className="px-5 py-4">
                       <span className="font-medium">{l.source || "—"}</span>
                       <span className="mt-1 block text-[10px] text-slate-400">{l.campaign || l.formName || "—"}</span>
@@ -486,7 +583,7 @@ export default function Leads() {
                         <span className="text-slate-400">Unassigned</span>
                       )}
                     </td>
-                    <td className="px-5 py-4 text-slate-500">{new Date(l.updatedAt || l.createdAt).toLocaleString()}</td>
+                    <td className="px-5 py-4 text-slate-500">{new Date(l.createdAt || l.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4">
                       <Link href={`/leads/${l._id}`} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-50 px-3 py-2 font-semibold text-indigo-700">
                         <ExternalLink size={13} /> Open
@@ -540,7 +637,7 @@ export default function Leads() {
               </div>
               <div className="flex justify-between py-0.5">
                 <span className="text-slate-400">Business / Project:</span>
-                <span className="text-slate-700">{assignModalLead.businessProject?.name || assignModalLead.meta?.businessId || "—"}</span>
+                <span className="text-slate-700">{getBusinessProjectDisplay(assignModalLead)}</span>
               </div>
             </div>
 

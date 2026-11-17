@@ -75,14 +75,14 @@ export default function Sidebar() {
       <div
         onClick={() => setMobileOpen(false)}
         aria-hidden="true"
-        className={`fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300 md:hidden ${
+        className={`fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-xs transition-opacity duration-300 lg:hidden ${
           mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
       />
 
       {/* Sidebar (Slide-over drawer on < md, fixed sidebar on >= md) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-slate-800 bg-slate-950 px-3 py-4 text-slate-300 shadow-2xl transition-transform duration-300 ease-in-out md:static md:h-screen md:w-60 md:translate-x-0 md:px-3 md:py-5 md:shadow-xl ${
+        className={`fixed inset-y-0 left-0 z-50 flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-slate-800 bg-slate-950 px-3 py-4 text-slate-300 shadow-2xl transition-transform duration-300 ease-in-out lg:static lg:h-screen lg:w-60 lg:translate-x-0 lg:px-3 lg:py-5 lg:shadow-xl ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -105,7 +105,7 @@ export default function Sidebar() {
             type="button"
             onClick={() => setMobileOpen(false)}
             aria-label="Close menu"
-            className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white md:hidden transition"
+            className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white lg:hidden transition"
           >
             <X size={18} />
           </button>

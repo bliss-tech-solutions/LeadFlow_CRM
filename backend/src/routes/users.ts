@@ -312,6 +312,13 @@ r.post("/", auth, roles("ADMIN", "BUSINESS"), async (req, res) => {
       if (business) finalBusinessId = String(business);
       if (Array.isArray(assignedProjects) && assignedProjects.length > 0) {
         finalAssignedProjects = assignedProjects.map(String);
+        // Automatically sync business from the assigned project if not explicitly set
+        if (!finalBusinessId) {
+          const firstProj = await BusinessProject.findById(finalAssignedProjects[0]).select("business").lean();
+          if (firstProj?.business) {
+            finalBusinessId = String(firstProj.business);
+          }
+        }
       }
     }
   }
@@ -470,10 +477,6 @@ r.get("/me", auth, async (req, res) => {
 });
 
 /**
- * PATCH /api/users/:id/status
- * Admin blocks or unblocks a user account (restricts receiving leads & login).
- */
-/**
  * PATCH /api/users/:id/assigned-projects
  * Admin or Business partner updates project assignments for a salesperson.
  */
@@ -509,8 +512,17 @@ r.patch("/:id/assigned-projects", auth, roles("ADMIN", "BUSINESS"), async (req, 
   }
 
   targetUser.assignedProjects = assignedProjects as any;
-  if (assignedProjects.length > 0 && !targetUser.businessProject) {
-    targetUser.businessProject = assignedProjects[0] as any;
+  if (assignedProjects.length > 0) {
+    if (!targetUser.businessProject) {
+      targetUser.businessProject = assignedProjects[0] as any;
+    }
+    // Automatically associate business if not already set
+    if (!targetUser.business) {
+      const firstProj = await BusinessProject.findById(assignedProjects[0]).select("business").lean();
+      if (firstProj?.business) {
+        targetUser.business = firstProj.business as any;
+      }
+    }
   }
   await targetUser.save();
 

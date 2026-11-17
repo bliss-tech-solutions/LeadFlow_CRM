@@ -2,6 +2,7 @@ import { Business } from "../models/Business";
 import { BusinessProject } from "../models/BusinessProject";
 import { User } from "../models/User";
 import { logger } from "./logger";
+import { remapUnmappedLeads } from "../services/leadRemap.service";
 
 export async function migrateBusinesses() {
   try {
@@ -69,8 +70,10 @@ export async function migrateBusinesses() {
     }
 
     logger.info("[migration] Business hierarchy migration completed successfully.");
+
+    // 4. Automatically remap any unmapped leads to matching business projects
+    await remapUnmappedLeads();
   } catch (error) {
     logger.error("[migration] Error during business migration", { error });
   }
 }
-
