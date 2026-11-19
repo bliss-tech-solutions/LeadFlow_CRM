@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { timingSafeEqual } from "crypto";
 import { env } from "../config/env";
-import { ingestMetaLead } from "../services/meta.service";
+import { recordAndIngest } from "../services/webhookEvents.service";
+import { webhookLimiter } from "../middleware/rateLimits";
+import { logger } from "../config/logger";
 
 const r = Router();
 
@@ -58,7 +60,7 @@ function getCleanString(val: any): string | undefined {
 }
 
 // POST /api/leadsync/webhook
-r.post("/webhook", async (req, res) => {
+r.post("/webhook", webhookLimiter, async (req, res) => {
   try {
     const secret = env.LEADSYNC_WEBHOOK_SECRET;
 
@@ -245,7 +247,7 @@ r.post("/webhook", async (req, res) => {
     };
 
     const io = req.app.get("io");
-    const result = await ingestMetaLead(payload, io, {
+    const result = await recordAndIngest("LEADSYNC", payload, io, {
       fetchDetails: false,
       source: "LEADSYNC",
     });
@@ -256,7 +258,7 @@ r.post("/webhook", async (req, res) => {
       leadId: result.lead.id,
     });
   } catch (error) {
-    console.error("[leadsync] webhook processing failed", error);
+    logger.error("[leadsync] webhook processing failed", { error: (error as any)?.message });
     return res.status(500).json({ received: false, message: "LeadSync webhook processing failed" });
   }
 });

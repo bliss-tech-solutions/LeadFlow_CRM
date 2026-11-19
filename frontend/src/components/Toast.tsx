@@ -15,11 +15,13 @@ import {
   X,
   UserPlus,
   Phone,
+  AlertTriangle,
+  AtSign,
 } from "lucide-react";
 
 type Popup = {
   id: string;
-  kind: "LEAD" | "FOLLOWUP" | "CALL";
+  kind: "LEAD" | "FOLLOWUP" | "CALL" | "ALERT" | "MENTION";
   title: string;
   message: string;
   tone: "blue" | "green" | "amber" | "violet" | "rose" | "slate";
@@ -201,6 +203,48 @@ export default function RealtimeToast() {
       addPopup(popup);
     };
 
+    const onSla = (p: any) =>
+      addPopup({
+        id: `sla-${p?.leadId}-${Date.now()}`,
+        kind: "ALERT",
+        title: "Lead waiting for first contact",
+        message: `${p?.name || "A lead"} has been waiting ${p?.minutes ?? ""} minutes. Call now to keep your SLA.`,
+        tone: "amber",
+      });
+    const onEscalated = (p: any) =>
+      addPopup({
+        id: `esc-${p?.leadId}-${Date.now()}`,
+        kind: "ALERT",
+        title: "SLA breached",
+        message: `${p?.name || "A lead"} is still uncontacted. Consider reassigning.`,
+        tone: "rose",
+      });
+    const onNotification = (p: any) => {
+      if (p?.type === "MENTION")
+        addPopup({ id: `mention-${p?.leadId}-${Date.now()}`, kind: "MENTION", title: "You were mentioned", message: "A teammate mentioned you in a lead note.", tone: "violet" });
+    };
+    const onWhatsApp = (p: any) => {
+      if (p?.status === "FAILED")
+        addPopup({ id: `wa-${p?.messageId}-${Date.now()}`, kind: "ALERT", title: "WhatsApp message failed", message: p?.error || "Open the lead to see details.", tone: "rose" });
+    };
+    const onUnassigned = (p: any) =>
+      addPopup({
+        id: `unassigned-${Date.now()}`,
+        kind: "ALERT",
+        title: "Leads waiting for a salesperson",
+        message: `${p?.count ?? "Some"} leads have no available salesperson. Raise limits or assign manually.`,
+        tone: "amber",
+      });
+    const onStatusChanged = (p: any) => {
+      if (p?.userId === user.id && p?.isActive === false) logout();
+    };
+
+    socket.on("sla_warning", onSla);
+    socket.on("sla_escalated", onEscalated);
+    socket.on("notification", onNotification);
+    socket.on("whatsapp_message", onWhatsApp);
+    socket.on("unassigned_leads", onUnassigned);
+    socket.on("user_status_changed", onStatusChanged);
     socket.on("new_lead", onNewLead);
     socket.on("call_logged", onCallLogged);
     socket.on("followup_updated", onFollowup);
@@ -227,6 +271,12 @@ export default function RealtimeToast() {
     if (!socket.connected) socket.connect();
 
     return () => {
+      socket.off("sla_warning", onSla);
+      socket.off("sla_escalated", onEscalated);
+      socket.off("notification", onNotification);
+      socket.off("whatsapp_message", onWhatsApp);
+      socket.off("unassigned_leads", onUnassigned);
+      socket.off("user_status_changed", onStatusChanged);
       socket.off("new_lead", onNewLead);
       socket.off("call_logged", onCallLogged);
       socket.off("followup_updated", onFollowup);
@@ -255,6 +305,8 @@ export default function RealtimeToast() {
   const iconByKind = (popup: Popup) => {
     if (popup.kind === "LEAD") return <UserPlus size={18} />;
     if (popup.kind === "CALL") return <Phone size={18} />;
+    if (popup.kind === "ALERT") return <AlertTriangle size={18} />;
+    if (popup.kind === "MENTION") return <AtSign size={18} />;
     if (popup.title.includes("completed")) return <CheckCircle2 size={18} />;
     if (popup.title.includes("reminder")) return <BellRing size={18} />;
     return <CalendarClock size={18} />;

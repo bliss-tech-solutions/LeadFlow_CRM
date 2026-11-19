@@ -1,7 +1,9 @@
 import { Business } from "../models/Business";
 import { BusinessProject } from "../models/BusinessProject";
 import { User } from "../models/User";
+import { Lead } from "../models/Lead";
 import { logger } from "./logger";
+import { exactRegex } from "../utils/regex";
 import { remapUnmappedLeads } from "../services/leadRemap.service";
 
 export async function migrateBusinesses() {
@@ -18,7 +20,7 @@ export async function migrateBusinesses() {
         const businessName = (project.developerGroup || project.name || "Default Business Group").trim();
 
         let business = await Business.findOne({
-          name: { $regex: `^${businessName}$`, $options: "i" },
+          name: exactRegex(businessName),
         });
 
         if (!business) {
@@ -68,6 +70,18 @@ export async function migrateBusinesses() {
         await s.save();
       }
     }
+
+    // 4. Backfill Lead.business from the lead's project (tenant field used for fast scoping).
+    const projectsWithBusiness = await BusinessProject.find({ business: { $ne: null } }).select("_id business").lean();
+    let backfilled = 0;
+    for (const proj of projectsWithBusiness) {
+      const result = await Lead.updateMany(
+        { businessProject: proj._id, $or: [{ business: { $exists: false } }, { business: null }] },
+        { $set: { business: proj.business } },
+      );
+      backfilled += result.modifiedCount;
+    }
+    if (backfilled) logger.info(`[migration] Backfilled business on ${backfilled} leads`);
 
     logger.info("[migration] Business hierarchy migration completed successfully.");
 

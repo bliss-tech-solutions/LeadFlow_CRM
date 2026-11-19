@@ -5,12 +5,13 @@ import Image from "next/image";
 import Topbar from "../../../components/Topbar";
 import Pagination from "../../../components/Pagination";
 import { api } from "../../../lib/api";
-import { getUser } from "../../../lib/auth";
+import { getUser, saveSession } from "../../../lib/auth";
 import {
   Plus,
   X,
   Search,
   Lock,
+  Eye,
   Unlock,
   Ban,
   CheckCircle2,
@@ -93,6 +94,22 @@ export default function Team() {
     }, 350);
     return () => clearTimeout(timer);
   }, [page, q, statusFilter]);
+
+  async function impersonate(user: any) {
+    if (!window.confirm(`View the CRM as ${user.name}? You'll see exactly what they see for 30 minutes. This is recorded in the audit log.`)) return;
+    try {
+      const r = await api(`/admin/impersonate/${user._id}`, { method: "POST" });
+      localStorage.setItem(
+        "leadflow_impersonator",
+        JSON.stringify({ token: localStorage.getItem("leadflow_token"), user: current }),
+      );
+      saveSession(r.token, r.user);
+      window.dispatchEvent(new Event("leadflow:logout"));
+      window.location.replace(r.user.role === "BUSINESS" ? "/business-dashboard" : "/my-day");
+    } catch (e: any) {
+      alert(e?.message || "Could not switch user");
+    }
+  }
 
   async function toggleBlock(user: any) {
     if (user._id === current?.id && user.isActive) {
@@ -328,7 +345,7 @@ export default function Team() {
                         <FolderGit2 size={12} /> Assign Projects
                       </button>
 
-                      {isAdmin && (
+                      {canManage && (
                         <button
                           type="button"
                           onClick={() => toggleBlock(u)}
@@ -456,7 +473,7 @@ export default function Team() {
                           </button>
                         )}
 
-                        {isAdmin && (
+                        {canManage && (
                           <button
                             type="button"
                             onClick={() => toggleBlock(u)}
@@ -476,6 +493,16 @@ export default function Team() {
                               <Lock size={12} />
                             )}
                             {isBlocked ? "Unblock" : "Block"}
+                          </button>
+                        )}
+                        {current?.role === "ADMIN" && !isBlocked && (
+                          <button
+                            type="button"
+                            onClick={() => impersonate(u)}
+                            title="View the CRM as this user (30 minutes, audited)"
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                          >
+                            <Eye size={12} /> View as
                           </button>
                         )}
                       </div>

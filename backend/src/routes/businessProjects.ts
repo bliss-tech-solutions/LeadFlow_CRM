@@ -14,6 +14,8 @@ import {
 import { env } from "../config/env";
 import { Notification } from "../models/Notification";
 import { remapUnmappedLeads } from "../services/leadRemap.service";
+import { containsRegex, exactRegex } from "../utils/regex";
+import { salesBelongsToProject, stripQuota } from "../utils/tenant";
 
 const r = Router();
 
@@ -95,7 +97,7 @@ r.get("/", auth, async (req, res) => {
   const { business, stage, search = "", page = "1", limit = "10" } =
     req.query as Record<string, string>;
 
-  if (business) {
+  if (business && isAdmin(req)) {
     filter.business = business;
   }
 
@@ -108,6 +110,8 @@ r.get("/", auth, async (req, res) => {
       filter.business = req.user.business;
     } else if (req.user.businessProject) {
       filter._id = req.user.businessProject;
+    } else {
+      filter._id = { $in: [] };
     }
   } else if (!isAdmin(req)) {
     const assignedIds = req.user && Array.isArray(req.user.assignedProjects) ? req.user.assignedProjects : [];
@@ -123,11 +127,11 @@ r.get("/", auth, async (req, res) => {
   const normalizedSearch = String(search).trim();
   if (normalizedSearch) {
     filter.$or = [
-      { name: { $regex: normalizedSearch, $options: "i" } },
-      { developerGroup: { $regex: normalizedSearch, $options: "i" } },
-      { location: { $regex: normalizedSearch, $options: "i" } },
-      { reraNumber: { $regex: normalizedSearch, $options: "i" } },
-      { stage: { $regex: normalizedSearch, $options: "i" } },
+      { name: containsRegex(normalizedSearch) },
+      { developerGroup: containsRegex(normalizedSearch) },
+      { location: containsRegex(normalizedSearch) },
+      { reraNumber: containsRegex(normalizedSearch) },
+      { stage: containsRegex(normalizedSearch) },
     ];
   }
 
@@ -144,6 +148,8 @@ r.get("/", auth, async (req, res) => {
       .lean(),
     BusinessProject.countDocuments(filter),
   ]);
+
+  if (!isAdmin(req)) projects.forEach((proj: any) => stripQuota(proj));
 
   res.json({ projects, total, page: p, pages: Math.ceil(total / l) || 1 });
 });
@@ -169,6 +175,7 @@ r.get("/:id", auth, async (req, res) => {
     return res.status(404).json({ message: "Business project not found" });
   }
 
+  if (!isAdmin(req)) stripQuota(project as any);
   res.json({ project });
 });
 
@@ -196,7 +203,7 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   if (!businessId) {
     // If no business selected by admin, find or create default business
     const defaultName = body.developerGroup?.trim() || "General Business Group";
-    let defaultBiz = await Business.findOne({ name: { $regex: "^" + defaultName + "$", $options: "i" } });
+    let defaultBiz = await Business.findOne({ name: exactRegex(defaultName) });
     if (!defaultBiz) {
       defaultBiz = await Business.create({
         name: defaultName,
@@ -237,7 +244,9 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   if (stage === "UPCOMING") {
     documents = [];
   } else {
-    documents = documents.map((doc: any) => ({
+    documents = documents
+      .filter((doc: any) => !doc.storageKey || String(doc.storageKey).startsWith("leadflow/projects/pending/"))
+      .map((doc: any) => ({
       name: doc.name,
       url: doc.url,
       category: doc.category || "BROCHURE",
@@ -308,7 +317,7 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
  * PATCH /api/business-projects/:id/stage
  * Promote or transition project stage (e.g. UPCOMING -> ONGOING or COMPLETED)
  */
-r.patch("/:id/stage", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
+r.patch("/:id/stage", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const project = await BusinessProject.findById(req.params.id);
   if (!project) return res.status(404).json({ message: "Project not found" });
 
@@ -492,16 +501,27 @@ r.post("/:id/documents", auth, async (req, res) => {
     return res.status(404).json({ message: "Business project not found" });
   }
 
-  const name = String(req.body?.name ?? "").trim();
-  const url = String(req.body?.url ?? "").trim();
+  const name = String(req.body?.name ?? "").trim().slice(0, 200);
   const storageKey = String(req.body?.storageKey ?? "").trim();
   const category = String(req.body?.category ?? "OTHER");
 
-  if (!name || !url || !storageKey) {
+  if (!name || !storageKey) {
     return res.status(400).json({
       message: "Uploaded document metadata is incomplete",
     });
   }
+
+  // The key must have been issued by our presign endpoint for THIS project
+  // (or the admin-only pending prefix). Prevents registering another tenant's object.
+  const ownPrefix = `leadflow/projects/${project.id}/`;
+  const pendingAllowed = isAdmin(req) && storageKey.startsWith("leadflow/projects/pending/");
+  if ((!storageKey.startsWith(ownPrefix) && !pendingAllowed) || storageKey.includes("..")) {
+    return res.status(400).json({ message: "Invalid document storage key for this project" });
+  }
+  if (project.documents.some((d: any) => d.storageKey === storageKey)) {
+    return res.status(409).json({ message: "This document is already attached" });
+  }
+  const url = getObjectUrl(storageKey);
 
   if (!DOCUMENT_CATEGORIES.includes(category)) {
     return res.status(400).json({ message: "Invalid document category" });
@@ -534,7 +554,7 @@ r.post("/:id/documents", auth, async (req, res) => {
     ip: req.ip,
   });
 
-  res.status(201).json({ project });
+  res.status(201).json({ project: isAdmin(req) ? project : stripQuota(project.toObject()) });
 });
 
 /**
@@ -668,7 +688,7 @@ r.delete(
       ip: req.ip,
     });
 
-    res.json({ success: true, project });
+    res.json({ success: true, project: isAdmin(req) ? project : stripQuota(project.toObject()) });
   },
 );
 
@@ -678,7 +698,7 @@ r.delete(
  */
 r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   const project = await BusinessProject.findById(req.params.id).select(
-    "_id name",
+    "_id name business",
   );
   const user = await User.findOne({
     _id: req.body?.userId,
@@ -690,6 +710,12 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
     return res
       .status(404)
       .json({ message: "Project or active salesperson not found" });
+  }
+
+  if (!(await salesBelongsToProject(user.id, project._id))) {
+    return res.status(400).json({
+      message: "This salesperson does not belong to the project's business. Assign the project to them first.",
+    });
   }
 
   const leads = await Lead.find({
@@ -724,6 +750,10 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
   if (leads.length) {
     const io = req.app.get("io");
     if (io) {
+      io.to(`business:${(project as any).business}`).emit("leads_assigned", {
+        projectId: project.id,
+        count: leads.length,
+      });
       io.to("role:ADMIN").emit("leads_assigned", {
         projectId: project.id,
         count: leads.length,

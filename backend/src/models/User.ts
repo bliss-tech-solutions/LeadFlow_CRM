@@ -16,6 +16,11 @@ export interface IUser extends Document {
   autoLeadCountDate?: string;
   profilePhotoUrl?: string;
   profilePhotoKey?: string;
+  tokenVersion: number;
+  lastLoginAt?: Date;
+  lastAutoAssignedAt?: Date;
+  resetTokenHash?: string;
+  resetTokenExpires?: Date;
 }
 
 const schema = new Schema<IUser>(
@@ -71,6 +76,11 @@ const schema = new Schema<IUser>(
     autoLeadCountDate: String,
     profilePhotoUrl: String,
     profilePhotoKey: String,
+    tokenVersion: { type: Number, default: 0 },
+    lastLoginAt: Date,
+    lastAutoAssignedAt: Date,
+    resetTokenHash: { type: String, select: false },
+    resetTokenExpires: { type: Date, select: false },
   },
   { timestamps: true },
 );

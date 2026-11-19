@@ -3,6 +3,7 @@ import { LeadDocument } from "../models/Document";
 import { Lead } from "../models/Lead";
 import { auth, roles } from "../middleware/auth";
 import { logActivity } from "../utils/activity";
+import { getBusinessOwnerProjectIds } from "../utils/tenant";
 
 const r = Router();
 
@@ -13,10 +14,12 @@ async function canAccessLeadDocuments(req: any, leadId: string) {
   if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") return true;
 
   if (req.user?.role === "BUSINESS") {
+    const projectIds = await getBusinessOwnerProjectIds(req.user);
+    if (!projectIds.length) return false;
     return Boolean(
       await Lead.exists({
         _id: leadId,
-        businessProject: req.user.businessProject,
+        businessProject: { $in: projectIds },
         deliveryStatus: { $ne: "HELD" },
       }),
     );
@@ -38,7 +41,8 @@ async function canAccessProjectDocuments(req: any, projectId: string) {
   if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") return true;
 
   if (req.user?.role === "BUSINESS") {
-    return String(req.user.businessProject) === String(projectId);
+    const projectIds = await getBusinessOwnerProjectIds(req.user);
+    return projectIds.some((id) => String(id) === String(projectId));
   }
 
   return Boolean(

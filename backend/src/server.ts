@@ -7,6 +7,7 @@ import rateLimit from "express-rate-limit";
 import { connectDB } from "./config/db";
 import { migrateBusinesses } from "./config/migrateBusinesses";
 import { env } from "./config/env";
+import { isAllowedOrigin } from "./config/origins";
 import { setupSocket } from "./sockets";
 
 import { auth } from "./middleware/auth";
@@ -25,7 +26,14 @@ import notificationRoutes from "./routes/notifications";
 import businessRoutes from "./routes/businesses";
 import businessProjectRoutes from "./routes/businessProjects";
 import leadDeliveryRoutes from "./routes/leadDelivery";
-import { releaseHeldLeads } from "./services/leadDelivery.service";
+import whatsappRoutes from "./routes/whatsapp";
+import analyticsRoutes from "./routes/analytics";
+import adminRoutes from "./routes/admin";
+import { releaseHeldLeads, assignUnassignedLeads } from "./services/leadDelivery.service";
+import { retryFailedWebhookEvents } from "./services/webhookEvents.service";
+import { processLeadSla, processAutoReassign, processDailyDigests } from "./services/automation.service";
+import { whatsappManager } from "./services/whatsapp/sessionManager";
+import { processWhatsAppQueue } from "./services/whatsapp/queue";
 import { processFollowupReminders } from "./services/followupReminder.service";
 import { startKeepAliveService } from "./services/keepAlive.service";
 
@@ -46,37 +54,19 @@ const server = http.createServer(app);
 const io = setupSocket(server);
 
 app.set("io", io);
+whatsappManager.setIO(io);
 
 // Security
+app.disable("x-powered-by");
 app.use(helmet());
 
-const defaultAllowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:3001",
-  "http://localhost:4000",
-  "http://127.0.0.1:3000",
-  "http://127.0.0.1:4000",
-];
-
-const envOrigins = (env.FRONTEND_URL || "")
-  .split(",")
-  .map((o) => o.trim().replace(/\/$/, ""))
-  .filter(Boolean);
-
-const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...envOrigins]));
+app.set("trust proxy", 1);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      const cleanOrigin = origin.trim().replace(/\/$/, "");
-      if (
-        allowedOrigins.includes(cleanOrigin) ||
-        cleanOrigin.endsWith(".trycloudflare.com")
-      ) {
-        return callback(null, true);
-      }
-      return callback(new Error(`Origin ${origin} is not allowed by CRM CORS policy`));
+      const allowed = isAllowedOrigin(origin);
+      return callback(null, allowed);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -132,6 +122,9 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/businesses", businessRoutes);
 app.use("/api/business-projects", businessProjectRoutes);
 app.use("/api/lead-delivery", leadDeliveryRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/admin", adminRoutes);
 
 // 404
 app.use((_req, res) =>
@@ -143,8 +136,12 @@ app.use((_req, res) =>
 // Error handler
 app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   const error = err instanceof Error ? err : new Error("Unknown error");
-  const candidate = err as { statusCode?: number; status?: number; code?: string } | null;
-  const statusCode = candidate?.statusCode ?? candidate?.status ?? 500;
+  const candidate = err as { statusCode?: number; status?: number; code?: string | number; name?: string } | null;
+  let statusCode = candidate?.statusCode ?? candidate?.status ?? 500;
+  // Map common Mongoose / body-parser errors to client errors instead of 500s.
+  if (error.name === "ValidationError" || error.name === "CastError") statusCode = 400;
+  if (candidate?.code === 11000) statusCode = 409;
+  if ((err as any)?.type === "entity.parse.failed") statusCode = 400;
   const user = req.user;
 
   logger.error("Unhandled API Error", {
@@ -160,51 +157,86 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   });
 
   res.status(statusCode >= 400 && statusCode <= 599 ? statusCode : 500).json({
-    message: statusCode >= 400 && statusCode < 500
-      ? error.message
-      : "Internal server error",
+    message: candidate?.code === 11000
+      ? "This record already exists"
+      : statusCode >= 400 && statusCode < 500
+        ? error.message
+        : "Internal server error",
   });
+});
+
+/**
+ * Background jobs. Each job is guarded so a slow run never overlaps the next tick.
+ * Jobs are idempotent (atomic claims in MongoDB), so running two API instances is
+ * safe for everything except WhatsApp sessions (see sessionManager.ts).
+ */
+function every(name: string, ms: number, fn: () => Promise<unknown>) {
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      await fn();
+    } catch (error: any) {
+      logger.error(`Background job failed: ${name}`, { error: error?.message, stack: error?.stack });
+    } finally {
+      busy = false;
+    }
+  };
+  void tick();
+  return setInterval(tick, ms);
+}
+
+const timers: NodeJS.Timeout[] = [];
+
+function startJobs() {
+  // Keep free hosting tiers awake.
+  startKeepAliveService();
+
+  // Held-lead release + retry for released-but-unassigned leads (30s).
+  timers.push(
+    every("lead-delivery", 30_000, async () => {
+      await releaseHeldLeads(io);
+      await assignUnassignedLeads(io);
+    }),
+  );
+
+  // Follow-up reminders (atomic claim on reminder24hSentAt prevents duplicates).
+  timers.push(every("followup-reminders", 60_000, () => processFollowupReminders(io)));
+
+  // Lead SLA alerts, escalation and auto-reassignment.
+  timers.push(
+    every("lead-automation", 60_000, async () => {
+      await processLeadSla(io);
+      await processAutoReassign(io);
+      await processDailyDigests();
+    }),
+  );
+
+  // Retry failed webhook events (transient Graph API / DB errors).
+  timers.push(every("webhook-retry", 5 * 60_000, () => retryFailedWebhookEvents(io)));
+
+  // WhatsApp: restore linked devices, then drain the send queue.
+  void whatsappManager.restoreAll();
+  timers.push(every("whatsapp-queue", 3_000, () => processWhatsAppQueue(io)));
+}
+
+process.on("unhandledRejection", (reason: any) => {
+  logger.error("Unhandled promise rejection", { error: reason?.message || String(reason), stack: reason?.stack });
 });
 
 // Start server
 connectDB()
   .then(async () => {
     await migrateBusinesses();
-    server.listen(env.PORT, () => {
+    server.listen(env.PORT, "0.0.0.0", () => {
       logger.info("API server started", {
         port: env.PORT,
+        host: "0.0.0.0",
         environment: process.env.NODE_ENV,
       });
 
-      // Start 9-minute background keep-alive service to prevent hosting cold sleep
-      startKeepAliveService();
-
-      // Check every 30 seconds so held leads are released within the next minute.
-      const release = () => {
-        releaseHeldLeads(io).catch((error) => {
-          logger.error("Failed to release held leads", {
-            error: error?.message,
-          });
-        });
-      };
-
-      release();
-      setInterval(release, 30_000);
-
-      const followupMaintenance = async () => {
-        try {
-          await processFollowupReminders(io);
-        } catch (error: any) {
-          logger.error("Follow-up maintenance failed", {
-            error: error?.message,
-          });
-        }
-      };
-
-      // Follow-up reminders run every minute. MongoDB's atomic claim
-      // (reminder24hSentAt) prevents duplicate reminders across instances.
-      void followupMaintenance();
-      setInterval(followupMaintenance, 60 * 1000);
+      startJobs();
     });
   })
   .catch((err) => {
@@ -218,6 +250,8 @@ connectDB()
 
 const shutdown = (signal: string) => {
   logger.info("Shutting down API server", { signal });
+  timers.forEach(clearInterval);
+  void whatsappManager.shutdown();
   server.close(() => {
     void import("mongoose").then(({ default: mongoose }) => mongoose.disconnect())
       .catch((error: unknown) => {

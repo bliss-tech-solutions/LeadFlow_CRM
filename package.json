@@ -9,6 +9,9 @@
   "scripts": {
     "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "build": "npm run build -w backend && npm run build -w frontend",
+    "mobile": "npm start --prefix mobile",
+    "mobile:admin": "npm run start:admin --prefix mobile",
+    "mobile:sales": "npm run start:sales --prefix mobile",
     "seed": "npm run seed -w backend",
     "install:all": "npm install"
   },

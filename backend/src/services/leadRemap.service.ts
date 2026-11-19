@@ -156,6 +156,8 @@ export async function remapUnmappedLeads(): Promise<{ remappedCount: number; sca
 
       if (matchedProjectId) {
         lead.businessProject = matchedProjectId;
+        const matchedProject = await BusinessProject.findById(matchedProjectId).select("business").lean();
+        if (matchedProject?.business) (lead as any).business = matchedProject.business;
         if (!lead.meta) lead.meta = {};
         lead.meta.businessId = String(matchedProjectId);
 

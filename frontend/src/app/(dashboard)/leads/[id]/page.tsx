@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import Topbar from "../../../../components/Topbar";
+import StatusChangeModal from "../../../../components/StatusChangeModal";
+import WhatsAppSendDrawer from "../../../../components/WhatsAppSendDrawer";
+import WhatsAppIcon from "../../../../components/WhatsAppIcon";
+import NotesPanel from "../../../../components/NotesPanel";
 import { api } from "../../../../lib/api";
 import { getUser } from "../../../../lib/auth";
+import { socket } from "../../../../lib/socket";
+import { scoreTone, scoreLabel, telHref, statusLabel } from "../../../../lib/leadMeta";
 import {
   Phone,
   CalendarPlus,
@@ -18,6 +25,10 @@ import {
   ExternalLink,
   Building2,
   Download,
+  AlertTriangle,
+  Copy,
+  CheckCheck,
+  Check,
 } from "lucide-react";
 
 const callResults = [
@@ -206,6 +217,13 @@ export default function LeadDetail() {
   const currentUser = getUser();
   const [data, setData] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
+  const [waOpen, setWaOpen] = useState(false);
+  const [waMessages, setWaMessages] = useState<any[]>([]);
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState("");
+  const role = currentUser?.role;
+  const canManageTeam = role === "ADMIN" || role === "MANAGER" || role === "BUSINESS";
+  const canWhatsApp = role === "BUSINESS" || role === "SALES";
   const [modal, setModal] = useState<"call" | "followup" | "assign" | null>(
     null,
   );
@@ -218,19 +236,59 @@ export default function LeadDetail() {
     userId: "",
     type: "CALL",
   });
-  async function load() {
+  const load = useCallback(async () => {
     const d = await api(`/leads/${id}`);
     setData(d);
-    if (currentUser?.role === "ADMIN" && !users.length) {
-      try {
-        const u = await api("/users");
-        setUsers(u.users || []);
-      } catch {}
-    }
-  }
-  useEffect(() => {
-    if (id) load();
+    api(`/whatsapp/leads/${id}/messages`)
+      .then((m) => setWaMessages(m.messages || []))
+      .catch(() => setWaMessages([]));
   }, [id]);
+
+  useEffect(() => {
+    if (id) void load();
+  }, [id, load]);
+
+  // Team list for assignment and @mentions
+  useEffect(() => {
+    if (canManageTeam) {
+      api("/users?role=SALES&limit=100")
+        .then((u) => setUsers(u.users || []))
+        .catch(() => {});
+    }
+  }, [canManageTeam]);
+
+  // Live updates for this lead
+  useEffect(() => {
+    if (!id) return;
+    const onLead = (p: any) => {
+      const leadId = p?.lead?._id || p?.leadId;
+      if (!leadId || String(leadId) === String(id)) void load();
+    };
+    const onWa = (p: any) => {
+      if (String(p?.leadId) === String(id)) {
+        api(`/whatsapp/leads/${id}/messages`).then((m) => setWaMessages(m.messages || [])).catch(() => {});
+      }
+    };
+    socket.on("lead_updated", onLead);
+    socket.on("call_logged", onLead);
+    socket.on("followup_updated", onLead);
+    socket.on("whatsapp_message", onWa);
+    return () => {
+      socket.off("lead_updated", onLead);
+      socket.off("call_logged", onLead);
+      socket.off("followup_updated", onLead);
+      socket.off("whatsapp_message", onWa);
+    };
+  }, [id, load]);
+
+  async function changeStatus(next: string, extra: { lostReason?: string; dealValue?: number } = {}) {
+    setStatusError("");
+    await api(`/leads/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: next, ...extra }),
+    });
+    await load();
+  }
   function close() {
     setModal(null);
     setError("");
@@ -350,7 +408,24 @@ export default function LeadDetail() {
         title="Lead detail"
         subtitle="Contact information, source mapping, project documents and transparent activity history."
       />
-      {(!lead.assignedTo || !lead.assignedTo?._id) && currentUser?.role === "ADMIN" && (
+      {data.duplicate && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+          <Copy size={16} className="mt-0.5 shrink-0" />
+          <span>
+            <b>Repeat enquiry.</b> This person already enquired as{" "}
+            <Link href={`/leads/${data.duplicate._id}`} className="font-semibold underline">
+              {data.duplicate.name}
+            </Link>{" "}
+            on {new Date(data.duplicate.createdAt).toLocaleDateString()} ({statusLabel(data.duplicate.status).toLowerCase()}). Check that history before calling.
+          </span>
+        </div>
+      )}
+      {lead.whatsappOptOut && (
+        <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+          <AlertTriangle size={14} /> This lead opted out of WhatsApp messages.
+        </div>
+      )}
+      {(!lead.assignedTo || !lead.assignedTo?._id) && canManageTeam && (
         <div className="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
@@ -403,24 +478,54 @@ export default function LeadDetail() {
                   {lead.email || "No email"} · {lead.phone || "No phone"}
                 </p>
               </div>
-              <select
-                value={lead.status}
-                onChange={async (e) => {
-                  await api(`/leads/${id}/status`, {
-                    method: "PATCH",
-                    body: JSON.stringify({ status: e.target.value }),
-                  });
-                  load();
-                }}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold"
-              >
-                <option value="">Status</option>
-                {statuses.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
+              <div className="flex flex-col items-start gap-1 lg:items-end">
+                <label className="text-[10px] font-bold uppercase text-slate-400" htmlFor="lead-status">
+                  Status
+                </label>
+                <select
+                  id="lead-status"
+                  value={lead.status}
+                  onChange={async (e) => {
+                    const next = e.target.value;
+                    if (!next || next === lead.status) return;
+                    if (["LOST", "NOT_INTERESTED", "WON"].includes(next)) {
+                      setPendingStatus(next);
+                      return;
+                    }
+                    try {
+                      await changeStatus(next);
+                    } catch (err: any) {
+                      setStatusError(err?.message || "Could not change status");
+                    }
+                  }}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold"
+                >
+                  {statuses.map((s) => (
+                    <option key={s} value={s}>
+                      {statusLabel(s)}
+                    </option>
+                  ))}
+                </select>
+                {statusError && <span className="text-[11px] text-rose-600">{statusError}</span>}
+              </div>
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
+              {telHref(lead.phone) && (
+                <a
+                  href={telHref(lead.phone)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <Phone size={14} /> Call now
+                </a>
+              )}
+              {canWhatsApp && lead.phone && (
+                <button
+                  onClick={() => setWaOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  <WhatsAppIcon size={15} /> Send on WhatsApp
+                </button>
+              )}
               <button
                 onClick={() => setModal("call")}
                 className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2.5 text-xs font-semibold text-white"
@@ -433,7 +538,7 @@ export default function LeadDetail() {
               >
                 <CalendarPlus size={14} /> Schedule follow-up
               </button>
-              {currentUser?.role === "ADMIN" && (
+              {canManageTeam && (
                 <button
                   onClick={() => setModal("assign")}
                   className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs font-semibold text-slate-700"
@@ -445,7 +550,7 @@ export default function LeadDetail() {
             <div className="mt-5 grid gap-3 grid-cols-2 sm:grid-cols-2 lg:grid-cols-3">
               {[
                 ["Owner", lead.assignedTo?.name || "Unassigned"],
-                ["Score", `${lead.score}/100`],
+                ["Score", `${lead.score}/100 · ${scoreLabel(lead.score)}`],
                 ["Created", new Date(lead.createdAt).toLocaleString()],
                 [
                   "Next follow-up",
@@ -455,6 +560,9 @@ export default function LeadDetail() {
                 ],
                 ["Form", lead.formName || "—"],
                 ["Campaign", lead.campaign || "—"],
+                ...(lead.status === "WON" && lead.dealValue ? [["Deal value", `₹${Number(lead.dealValue).toLocaleString("en-IN")}`]] : []),
+                ...(lead.lostReason && ["LOST", "NOT_INTERESTED"].includes(lead.status) ? [["Lost reason", lead.lostReason]] : []),
+                ...(lead.lastWhatsAppAt ? [["Last WhatsApp", new Date(lead.lastWhatsAppAt).toLocaleString()]] : []),
               ].map(([a, b]) => (
                 <div key={a} className="rounded-xl bg-slate-50 p-3">
                   <span className="text-[10px] font-bold uppercase text-slate-400">
@@ -463,6 +571,18 @@ export default function LeadDetail() {
                   <b className="mt-1 block text-xs text-slate-900">{b}</b>
                 </div>
               ))}
+            </div>
+            {lead.tags?.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {lead.tags.map((t: string) => (
+                  <span key={t} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-medium text-slate-600">
+                    #{t}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${scoreTone(lead.score)}`}>
+              Lead score {lead.score}/100
             </div>
           </section>
           {project && (
@@ -596,6 +716,17 @@ export default function LeadDetail() {
               </div>
             </section>
           )}
+          <NotesPanel
+            leadId={String(id)}
+            notes={data.notes || []}
+            mentionable={[
+              ...users.map((u: any) => ({ _id: u._id, name: u.name, role: u.role })),
+              ...(lead.assignedTo?._id && !users.some((u: any) => u._id === lead.assignedTo._id)
+                ? [{ _id: lead.assignedTo._id, name: lead.assignedTo.name, role: "SALES" }]
+                : []),
+            ]}
+            onChange={load}
+          />
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
@@ -724,6 +855,42 @@ export default function LeadDetail() {
                   </strong>
                 </div>
               ))}
+            </div>
+          </section>
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold">WhatsApp</h2>
+              {canWhatsApp && lead.phone && (
+                <button onClick={() => setWaOpen(true)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100">
+                  <WhatsAppIcon size={13} /> New message
+                </button>
+              )}
+            </div>
+            <div className="mt-3 space-y-2">
+              {waMessages.length ? (
+                waMessages.slice(0, 8).map((m: any) => (
+                  <div key={m._id} className="rounded-xl bg-emerald-50/50 p-3">
+                    <p className="line-clamp-3 whitespace-pre-line text-xs text-slate-700">{m.body || "(documents only)"}</p>
+                    {m.documents?.length > 0 && <p className="mt-1 text-[10px] text-slate-500">📎 {m.documents.map((d: any) => d.name).join(", ")}</p>}
+                    <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400">
+                      <span>
+                        {m.sentBy?.name} · {new Date(m.createdAt).toLocaleString()}
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-0.5 font-semibold ${
+                          m.status === "READ" ? "text-sky-600" : m.status === "FAILED" ? "text-rose-600" : "text-slate-500"
+                        }`}
+                      >
+                        {m.status === "READ" || m.status === "DELIVERED" ? <CheckCheck size={12} /> : m.status === "SENT" ? <Check size={12} /> : null}
+                        {statusLabel(m.status).toLowerCase()}
+                      </span>
+                    </div>
+                    {m.status === "FAILED" && m.error && <p className="mt-1 text-[10px] text-rose-600">{m.error}</p>}
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-slate-500">No WhatsApp messages yet.</p>
+              )}
             </div>
           </section>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -900,7 +1067,7 @@ export default function LeadDetail() {
                   {" "}
                   <option value="">Select salesperson</option>
                   {users
-                    .filter((u) => u.role === "SALES")
+                    .filter((u) => u.role === "SALES" && u.isActive !== false)
                     .map((u) => (
                       <option key={u._id} value={u._id}>
                         {u.name} · {u.email}
@@ -931,6 +1098,16 @@ export default function LeadDetail() {
           </div>
         </div>
       )}
+      <StatusChangeModal
+        open={Boolean(pendingStatus)}
+        status={pendingStatus}
+        leadName={lead.name}
+        onClose={() => setPendingStatus(null)}
+        onConfirm={async ({ status, lostReason, dealValue }) => {
+          await changeStatus(status, { lostReason, dealValue });
+        }}
+      />
+      {waOpen && <WhatsAppSendDrawer leadId={String(id)} onClose={() => setWaOpen(false)} onSent={load} />}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { BusinessProject } from "../models/BusinessProject";
 import { Notification } from "../models/Notification";
 import { auth } from "../middleware/auth";
 import { logActivity } from "../utils/activity";
+import { containsRegex } from "../utils/regex";
 
 const r = Router();
 
@@ -257,9 +258,9 @@ r.get("/", auth, async (req, res) => {
     }
     if (normalizedSearch) {
       leadQuery.$or = [
-        { name: { $regex: normalizedSearch, $options: "i" } },
-        { email: { $regex: normalizedSearch, $options: "i" } },
-        { phone: { $regex: normalizedSearch, $options: "i" } },
+        { name: containsRegex(normalizedSearch) },
+        { email: containsRegex(normalizedSearch) },
+        { phone: containsRegex(normalizedSearch) },
       ];
     }
 
@@ -320,9 +321,9 @@ r.get("/export", auth, async (req, res) => {
     }
     if (normalizedSearch) {
       leadQuery.$or = [
-        { name: { $regex: normalizedSearch, $options: "i" } },
-        { email: { $regex: normalizedSearch, $options: "i" } },
-        { phone: { $regex: normalizedSearch, $options: "i" } },
+        { name: containsRegex(normalizedSearch) },
+        { email: containsRegex(normalizedSearch) },
+        { phone: containsRegex(normalizedSearch) },
       ];
     }
 

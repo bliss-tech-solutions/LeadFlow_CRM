@@ -39,6 +39,17 @@ export interface ILead extends Document {
   assignedAt?: Date;
   assignmentSource?: "AUTO" | "MANUAL";
   businessProject?: Types.ObjectId;
+  business?: Types.ObjectId;
+  dealValue?: number;
+  lostReason?: string;
+  tags: string[];
+  whatsappOptOut: boolean;
+  firstContactAt?: Date;
+  duplicateOf?: Types.ObjectId;
+  createdBy?: Types.ObjectId;
+  slaAlertedAt?: Date;
+  slaEscalatedAt?: Date;
+  lastWhatsAppAt?: Date;
   deliveryStatus: "RELEASED" | "HELD";
   heldUntil?: Date;
   score: number;
@@ -123,6 +134,17 @@ const schema = new Schema<ILead>(
       ref: "BusinessProject",
       index: true,
     },
+    business: { type: Schema.Types.ObjectId, ref: "Business", index: true },
+    dealValue: { type: Number, min: 0 },
+    lostReason: String,
+    tags: { type: [String], default: [] },
+    whatsappOptOut: { type: Boolean, default: false },
+    firstContactAt: Date,
+    duplicateOf: { type: Schema.Types.ObjectId, ref: "Lead" },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+    slaAlertedAt: Date,
+    slaEscalatedAt: Date,
+    lastWhatsAppAt: Date,
     deliveryStatus: {
       type: String,
       enum: ["RELEASED", "HELD"],
@@ -140,5 +162,9 @@ const schema = new Schema<ILead>(
 
 schema.index({ createdAt: -1 });
 schema.index({ email: 1, phone: 1 });
+schema.index({ phone: 1 });
+schema.index({ business: 1, status: 1, createdAt: -1 });
+schema.index({ assignedTo: 1, status: 1, createdAt: -1 });
+schema.index({ deliveryStatus: 1, assignedTo: 1, createdAt: 1 });
 
 export const Lead = model<ILead>("Lead", schema);

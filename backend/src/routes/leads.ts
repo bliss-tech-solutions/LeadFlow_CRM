@@ -10,6 +10,16 @@ import { auth, roles } from "../middleware/auth";
 import { logActivity, logAudit } from "../utils/activity";
 import { Notification } from "../models/Notification";
 import { remapUnmappedLeads } from "../services/leadRemap.service";
+import { Note } from "../models/Note";
+import { SavedView } from "../models/SavedView";
+import { escapeRegex } from "../utils/regex";
+import { getBusinessOwnerProjectIds, salesBelongsToProject } from "../utils/tenant";
+import { refreshLeadScore } from "../utils/scoring";
+import { normalizePhone, phoneTail } from "../utils/phone";
+import { emitLeadEvent } from "../sockets";
+import { validateBody, objectId, z } from "../middleware/validate";
+import { Types } from "mongoose";
+import { visibleLeadFilter, canAccessLead, leadScope } from "../utils/leadAccess";
 
 const r = Router();
 
@@ -24,125 +34,80 @@ const VALID_STATUSES = [
   "NOT_INTERESTED",
 ];
 
-/**
- * Build the lead visibility filter:
- * - ADMIN / MANAGER sees all released leads.
- * - BUSINESS sees all released leads for their assigned project.
- * - SALES sees only their assigned leads.
- */
-async function visibleLeadFilter(req: any) {
-  const filter: Record<string, unknown> = {
-    deliveryStatus: { $ne: "HELD" },
-  };
-
-  const { business, businessProject } = req.query as Record<string, string>;
-
-  if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") {
-    if (business) {
-      const bizProjects = await BusinessProject.find({ business }).select("_id").lean();
-      filter.businessProject = { $in: bizProjects.map((p: any) => p._id) };
-    } else if (businessProject) {
-      filter.businessProject = businessProject;
-    }
-    return filter;
-  }
-
-  if (req.user?.role === "BUSINESS") {
-    let businessId = req.user.business;
-    if (!businessId) {
-      const me = await User.findById(req.user.id).select("business businessProject").lean();
-      businessId = me?.business ? String(me.business) : undefined;
-    }
-    const projectIds: any[] = [];
-    if (businessId) {
-      const bizProjects = await BusinessProject.find({ business: businessId }).select("_id").lean();
-      projectIds.push(...bizProjects.map((p: any) => p._id));
-    }
-    if (req.user.businessProject) {
-      projectIds.push(req.user.businessProject);
-    }
-    if (!projectIds.length) {
-      filter.businessProject = { $in: [] };
-      return filter;
-    }
-
-    if (businessProject && projectIds.map(String).includes(String(businessProject))) {
-      filter.businessProject = businessProject;
-    } else {
-      filter.businessProject = { $in: projectIds };
-    }
-    return filter;
-  }
-
-  // SALES role
-  filter.assignedTo = req.user!.id;
-  filter.deliveryStatus = "RELEASED";
-
-  let assignedProjects = req.user.assignedProjects;
-  if (!assignedProjects) {
-    const me = await User.findById(req.user.id).select("assignedProjects").lean();
-    assignedProjects = me?.assignedProjects?.map(String) || [];
-  }
-
-  if (assignedProjects && assignedProjects.length > 0) {
-    if (businessProject && assignedProjects.map(String).includes(String(businessProject))) {
-      filter.businessProject = businessProject;
-    } else {
-      filter.businessProject = { $in: assignedProjects };
-    }
-  } else if (businessProject) {
-    filter.businessProject = businessProject;
-  }
-
-  return filter;
+function buildSearch(search: string) {
+  const rx = { $regex: escapeRegex(search), $options: "i" };
+  return [
+    { name: rx },
+    { email: rx },
+    { phone: rx },
+    { source: rx },
+    { campaign: rx },
+    { formName: rx },
+    { tags: rx },
+    { "meta.pageId": rx },
+    { "meta.pageName": rx },
+    { "meta.fieldData.values": rx },
+  ];
 }
 
-async function canAccessLead(req: any, leadId: string) {
-  if (req.user?.role === "ADMIN" || req.user?.role === "MANAGER") return true;
+/**
+ * Optional list filters shared by the list, board and export endpoints.
+ * Scope (who can see what) is applied first by visibleLeadFilter and is never widened here.
+ */
+function applyListFilters(q: any, query: Record<string, string>, req: any) {
+  const { search, status, source, assignedTo, dateFrom, dateTo, scoreMin, unassigned, tag, followup, uncontacted } = query;
+  if (status && VALID_STATUSES.includes(status)) q.status = status;
+  if (source) q.source = String(source).slice(0, 40);
+  if (tag) q.tags = String(tag).slice(0, 40);
 
-  if (req.user?.role === "BUSINESS") {
-    let businessId = req.user.business;
-    if (!businessId) {
-      const u = await User.findById(req.user.id).select("business businessProject").lean();
-      businessId = u?.business ? String(u.business) : undefined;
-    }
-    const projectIds: any[] = [];
-    if (businessId) {
-      const bizProjects = await BusinessProject.find({ business: businessId }).select("_id").lean();
-      projectIds.push(...bizProjects.map((p: any) => p._id));
-    }
-    if (req.user.businessProject) {
-      projectIds.push(req.user.businessProject);
-    }
-    if (!projectIds.length) return false;
-    return Boolean(
-      await Lead.exists({
-        _id: leadId,
-        businessProject: { $in: projectIds },
-        deliveryStatus: { $ne: "HELD" },
-      }),
-    );
+  const canFilterBySales = ["ADMIN", "MANAGER", "BUSINESS"].includes(req.user?.role);
+  if (canFilterBySales && assignedTo && Types.ObjectId.isValid(assignedTo)) q.assignedTo = assignedTo;
+  if (canFilterBySales && unassigned === "true") q.assignedTo = { $exists: false };
+
+  const created: Record<string, Date> = {};
+  if (dateFrom && !Number.isNaN(Date.parse(dateFrom))) created.$gte = new Date(dateFrom);
+  if (dateTo && !Number.isNaN(Date.parse(dateTo))) {
+    const end = new Date(dateTo);
+    end.setHours(23, 59, 59, 999);
+    created.$lte = end;
+  }
+  if (Object.keys(created).length) q.createdAt = created;
+
+  if (scoreMin && Number.isFinite(Number(scoreMin))) q.score = { $gte: Number(scoreMin) };
+  if (uncontacted === "true") {
+    q.status = "NEW";
+    q.lastContactAt = { $exists: false };
+  }
+  if (followup === "overdue") q.nextFollowUpAt = { $lt: new Date() };
+  if (followup === "today") {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    q.nextFollowUpAt = { $gte: start, $lt: end };
   }
 
-  const salesLead: any = await Lead.findOne({
-    _id: leadId,
-    assignedTo: req.user!.id,
-    deliveryStatus: "RELEASED",
-  }).select("businessProject").lean();
-
-  if (!salesLead) return false;
-
-  let assignedProjects = req.user.assignedProjects;
-  if (!assignedProjects) {
-    const me = await User.findById(req.user.id).select("assignedProjects").lean();
-    assignedProjects = me?.assignedProjects?.map(String) || [];
+  if (search && String(search).trim()) {
+    const or = buildSearch(String(search).trim());
+    if (q.$or) {
+      q.$and = [...(q.$and || []), { $or: q.$or }, { $or: or }];
+      delete q.$or;
+    } else q.$or = or;
   }
+  return q;
+}
 
-  if (assignedProjects && assignedProjects.length > 0 && salesLead.businessProject) {
-    return assignedProjects.map(String).includes(String(salesLead.businessProject));
-  }
-
-  return true;
+/** Find an existing lead with the same phone/email inside the same business. */
+async function findDuplicate(input: { phone?: string; email?: string; business?: unknown; excludeId?: unknown }) {
+  const or: any[] = [];
+  const tail = phoneTail(input.phone);
+  if (tail) or.push({ phone: { $regex: `${tail}$` } });
+  if (input.email) or.push({ email: { $regex: `^${escapeRegex(input.email)}$`, $options: "i" } });
+  if (!or.length) return null;
+  const q: any = { $or: or };
+  if (input.business) q.business = input.business;
+  if (input.excludeId) q._id = { $ne: input.excludeId };
+  return Lead.findOne(q).sort({ createdAt: 1 }).select("_id name phone email status assignedTo createdAt").lean();
 }
 
 r.get("/stats", auth, async (req, res) => {
@@ -178,43 +143,11 @@ r.get("/stats", auth, async (req, res) => {
  * List only the leads the authenticated user is allowed to see.
  */
 r.get("/", auth, async (req, res) => {
-  const {
-    search,
-    status,
-    source,
-    assignedTo,
-    businessProject,
-    page = "1",
-    limit = "20",
-  } = req.query as Record<string, string>;
+  const { page = "1", limit = "20", sort = "newest" } = req.query as Record<string, string>;
+  const sortSpec: Record<string, 1 | -1> =
+    sort === "score" ? { score: -1, createdAt: -1 } : sort === "oldest" ? { createdAt: 1 } : sort === "followup" ? { nextFollowUpAt: 1 } : { createdAt: -1 };
 
-  const q: any = await visibleLeadFilter(req);
-
-  if (status) q.status = status;
-  if (source) q.source = source;
-
-  // ADMIN may filter by any salesperson. Other roles cannot override their own scope.
-  if (assignedTo && req.user?.role === "ADMIN") {
-    q.assignedTo = assignedTo;
-  }
-
-
-
-  if (search) {
-    q.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { phone: { $regex: search, $options: "i" } },
-      { source: { $regex: search, $options: "i" } },
-      { campaign: { $regex: search, $options: "i" } },
-      { formName: { $regex: search, $options: "i" } },
-      { "meta.businessId": { $regex: search, $options: "i" } },
-      { "meta.pageId": { $regex: search, $options: "i" } },
-      { "meta.pageName": { $regex: search, $options: "i" } },
-      { "meta.fieldData.name": { $regex: search, $options: "i" } },
-      { "meta.fieldData.values": { $regex: search, $options: "i" } },
-    ];
-  }
+  const q: any = applyListFilters(await visibleLeadFilter(req), req.query as Record<string, string>, req);
 
   const p = Math.max(1, Number(page) || 1);
   const l = Math.min(100, Math.max(1, Number(limit) || 20));
@@ -227,7 +160,7 @@ r.get("/", auth, async (req, res) => {
         select: "name stage documents products business",
         populate: { path: "business", select: "name contactNo email status" },
       })
-      .sort({ createdAt: -1 })
+      .sort(sortSpec)
       .skip((p - 1) * l)
       .limit(l),
     Lead.countDocuments(q),
@@ -246,40 +179,7 @@ r.get("/", auth, async (req, res) => {
  * Download an Excel file of leads using exceljs, scoped to user permissions and active filters.
  */
 r.get("/export", auth, async (req, res) => {
-  const {
-    search,
-    status,
-    source,
-    assignedTo,
-    businessProject,
-  } = req.query as Record<string, string>;
-
-  const q: any = await visibleLeadFilter(req);
-
-  if (status) q.status = status;
-  if (source) q.source = source;
-
-  if (assignedTo && req.user?.role === "ADMIN") {
-    q.assignedTo = assignedTo;
-  }
-
-
-
-  if (search) {
-    q.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { phone: { $regex: search, $options: "i" } },
-      { source: { $regex: search, $options: "i" } },
-      { campaign: { $regex: search, $options: "i" } },
-      { formName: { $regex: search, $options: "i" } },
-      { "meta.businessId": { $regex: search, $options: "i" } },
-      { "meta.pageId": { $regex: search, $options: "i" } },
-      { "meta.pageName": { $regex: search, $options: "i" } },
-      { "meta.fieldData.name": { $regex: search, $options: "i" } },
-      { "meta.fieldData.values": { $regex: search, $options: "i" } },
-    ];
-  }
+  const q: any = applyListFilters(await visibleLeadFilter(req), req.query as Record<string, string>, req);
 
   const leads = await Lead.find(q)
     .populate("assignedTo", "name email")
@@ -387,6 +287,141 @@ r.get("/export", auth, async (req, res) => {
   res.end();
 });
 
+
+/**
+ * GET /api/leads/board
+ * Kanban pipeline: leads grouped by status (newest first, capped per column).
+ */
+r.get("/board", auth, async (req, res) => {
+  const perColumn = Math.min(100, Math.max(5, Number(req.query.perColumn) || 30));
+  const base: any = applyListFilters(await visibleLeadFilter(req), { ...(req.query as Record<string, string>), status: "" }, req);
+
+  const columns = await Promise.all(
+    VALID_STATUSES.map(async (status) => {
+      const q = { ...base, status };
+      const [leads, total] = await Promise.all([
+        Lead.find(q)
+          .select("name phone email status score source campaign assignedTo businessProject nextFollowUpAt createdAt dealValue tags")
+          .populate("assignedTo", "name")
+          .populate("businessProject", "name")
+          .sort({ score: -1, createdAt: -1 })
+          .limit(perColumn)
+          .lean(),
+        Lead.countDocuments(q),
+      ]);
+      return { status, total, leads };
+    }),
+  );
+
+  res.json({ columns });
+});
+
+/**
+ * GET /api/leads/my-day
+ * Focus list for the signed-in user: overdue follow-ups, today's agenda,
+ * uncontacted new leads and SLA breaches — all within the user's own scope.
+ */
+r.get("/my-day", auth, async (req, res) => {
+  const scope: any = await visibleLeadFilter(req);
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(startOfDay);
+  endOfDay.setDate(endOfDay.getDate() + 1);
+  const slaCutoff = new Date(now.getTime() - Number(process.env.LEAD_SLA_MINUTES || 15) * 60_000);
+
+  const isPlatformWide =
+    (req.user!.role === "ADMIN" || req.user!.role === "MANAGER") && !req.query.business && !req.query.businessProject;
+  const followupBase: any = { status: "PENDING" };
+  if (!isPlatformWide) followupBase.lead = { $in: await Lead.distinct("_id", scope) };
+  if (req.user!.role === "SALES") followupBase.user = req.user!.id;
+
+  const leadFields = "name phone email status score source campaign createdAt nextFollowUpAt businessProject assignedTo";
+
+  const [overdue, today, uncontacted, slaBreached, wonThisMonth, counts] = await Promise.all([
+    FollowUp.find({ ...followupBase, scheduledAt: { $lt: now } })
+      .populate("lead", "name phone status")
+      .sort({ scheduledAt: 1 })
+      .limit(50)
+      .lean(),
+    FollowUp.find({ ...followupBase, scheduledAt: { $gte: now, $lt: endOfDay } })
+      .populate("lead", "name phone status")
+      .sort({ scheduledAt: 1 })
+      .limit(50)
+      .lean(),
+    Lead.find({ ...scope, status: "NEW", lastContactAt: { $exists: false } })
+      .select(leadFields)
+      .populate("businessProject", "name")
+      .populate("assignedTo", "name")
+      .sort({ createdAt: -1 })
+      .limit(30)
+      .lean(),
+    Lead.countDocuments({ ...scope, status: "NEW", lastContactAt: { $exists: false }, createdAt: { $lt: slaCutoff } }),
+    Lead.countDocuments({
+      ...scope,
+      status: "WON",
+      updatedAt: { $gte: new Date(now.getFullYear(), now.getMonth(), 1) },
+    }),
+    Call.countDocuments({ user: req.user!.id, createdAt: { $gte: startOfDay } }),
+  ]);
+
+  res.json({
+    overdue,
+    today,
+    uncontacted,
+    stats: {
+      overdueCount: overdue.length,
+      todayCount: today.length,
+      uncontactedCount: uncontacted.length,
+      slaBreached,
+      wonThisMonth,
+      callsToday: counts,
+      slaMinutes: Number(process.env.LEAD_SLA_MINUTES || 15),
+    },
+  });
+});
+
+/**
+ * GET /api/leads/check-duplicate?phone=&email=
+ * Used by the manual lead form to warn before creating a duplicate.
+ */
+r.get("/check-duplicate", auth, async (req, res) => {
+  const scope: any = await visibleLeadFilter(req);
+  const tail = phoneTail(req.query.phone);
+  const email = String(req.query.email ?? "").trim();
+  const or: any[] = [];
+  if (tail) or.push({ phone: { $regex: `${tail}$` } });
+  if (email) or.push({ email: { $regex: `^${escapeRegex(email)}$`, $options: "i" } });
+  if (!or.length) return res.json({ duplicate: null });
+  const duplicate = await Lead.findOne({ ...scope, $and: [{ $or: or }] })
+    .select("_id name phone email status createdAt")
+    .lean();
+  res.json({ duplicate });
+});
+
+/** Saved list views (per user). */
+r.get("/views", auth, async (req, res) => {
+  const views = await SavedView.find({ user: req.user!.id }).sort({ createdAt: 1 }).lean();
+  res.json({ views });
+});
+
+r.post(
+  "/views",
+  auth,
+  validateBody(z.object({ name: z.string().trim().min(1).max(60), filters: z.record(z.string(), z.string().max(200)) })),
+  async (req, res) => {
+    const count = await SavedView.countDocuments({ user: req.user!.id });
+    if (count >= 20) return res.status(400).json({ message: "You can save up to 20 views" });
+    const view = await SavedView.create({ user: req.user!.id, name: req.body.name, filters: req.body.filters });
+    res.status(201).json({ view });
+  },
+);
+
+r.delete("/views/:viewId", auth, async (req, res) => {
+  await SavedView.deleteOne({ _id: req.params.viewId, user: req.user!.id });
+  res.json({ success: true });
+});
+
 /**
  * GET /api/leads/:id
  * Retrieve a single lead and all historical activities, calls, and follow-ups.
@@ -406,7 +441,7 @@ r.get("/:id", auth, async (req, res) => {
     return res.status(404).json({ message: "Lead not found" });
   }
 
-  const [activities, calls, followups] = await Promise.all([
+  const [activities, calls, followups, notes, duplicate] = await Promise.all([
     Activity.find({ lead: lead._id })
       .populate("actor", "name")
       .sort({ createdAt: -1 }),
@@ -416,9 +451,17 @@ r.get("/:id", auth, async (req, res) => {
     FollowUp.find({ lead: lead._id })
       .populate("user", "name")
       .sort({ createdAt: -1, updatedAt: -1 }),
+    Note.find({ lead: lead._id })
+      .populate("author", "name role profilePhotoUrl")
+      .sort({ pinned: -1, createdAt: -1 })
+      .limit(200)
+      .lean(),
+    lead.duplicateOf
+      ? Lead.findById(lead.duplicateOf).select("_id name phone email status createdAt").lean()
+      : Promise.resolve(null),
   ]);
 
-  res.json({ lead, activities, calls, followups });
+  res.json({ lead, activities, calls, followups, notes, duplicate });
 });
 
 /**
@@ -436,6 +479,15 @@ r.patch("/:id/status", auth, async (req, res) => {
     return res.status(400).json({ message: "Invalid lead status" });
   }
 
+  const lostReason = String(req.body?.lostReason ?? "").trim().slice(0, 300);
+  if ((req.body.status === "LOST" || req.body.status === "NOT_INTERESTED") && !lostReason) {
+    return res.status(400).json({ message: "Please select a reason when marking a lead as lost or not interested" });
+  }
+  const dealValue = req.body?.dealValue !== undefined && req.body?.dealValue !== "" ? Number(req.body.dealValue) : undefined;
+  if (dealValue !== undefined && (!Number.isFinite(dealValue) || dealValue < 0)) {
+    return res.status(400).json({ message: "Deal value must be a positive number" });
+  }
+
   const lead = await Lead.findById(req.params.id);
 
   if (!lead) {
@@ -449,15 +501,21 @@ r.patch("/:id/status", auth, async (req, res) => {
 
   lead.status = req.body.status;
   lead.contactStatus = req.body.contactStatus ?? lead.contactStatus;
+  if (lostReason && (lead.status === "LOST" || lead.status === "NOT_INTERESTED")) lead.lostReason = lostReason;
+  if (dealValue !== undefined && lead.status === "WON") lead.dealValue = dealValue;
+  if (lead.status !== "NEW" && !lead.firstContactAt) lead.firstContactAt = new Date();
   await lead.save();
+  void refreshLeadScore(lead.id);
 
   await logActivity({
     lead: lead.id,
     actor: req.user!.id,
     type: "STATUS_CHANGED",
     title: "Lead status changed",
-    description: `${before.status} → ${lead.status}`,
+    description: `${before.status} → ${lead.status}${lostReason && lead.status !== "WON" ? ` · Reason: ${lostReason}` : ""}${dealValue !== undefined && lead.status === "WON" ? ` · Deal value: ${dealValue}` : ""}`,
   });
+
+  emitLeadEvent(req.app.get("io"), "lead_updated", { lead: lead.toObject(), reason: "STATUS" }, await leadScope(lead._id));
 
   await logAudit({
     actor: req.user!.id,
@@ -479,7 +537,10 @@ r.patch("/:id/status", auth, async (req, res) => {
  * PATCH /api/leads/:id/assign
  * Admin manually assigns a released lead to a salesperson, bypassing automatic daily capacity.
  */
-r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
+r.patch("/:id/assign", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
+    return res.status(403).json({ message: "You do not have access to this lead" });
+  }
   const lead = await Lead.findById(req.params.id);
   const user = await User.findOne({
     _id: req.body?.userId,
@@ -500,6 +561,12 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
         message:
           "Held leads cannot be manually assigned until they are released",
       });
+  }
+
+  if (!(await salesBelongsToProject(user.id, lead.businessProject))) {
+    return res.status(400).json({
+      message: "This salesperson does not work on this lead's project. Assign the project to them first.",
+    });
   }
 
   const before = lead.assignedTo;
@@ -530,10 +597,18 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
 
   // Assignment is an internal state change, not a user notification.
   // The lead notification is the only lead popup shown to users.
-  if (io) {
-    io.to("role:ADMIN").emit("lead_updated", { lead: lead.toObject(), reason: "ASSIGNED" });
-    io.to(`user:${user.id}`).emit("lead_updated", { lead: lead.toObject(), reason: "ASSIGNED" });
+  emitLeadEvent(io, "lead_updated", { lead: lead.toObject(), reason: "ASSIGNED" }, await leadScope(lead._id));
+  if (io && before && String(before) !== user.id) {
+    io.to(`user:${String(before)}`).emit("lead_updated", { leadId: lead.id, reason: "UNASSIGNED" });
   }
+  await Notification.create({
+    user: user._id,
+    type: "LEAD_ASSIGNED",
+    title: "Lead assigned to you",
+    message: `${lead.name}${lead.phone ? ` · ${lead.phone}` : ""} was assigned to you.`,
+    entityType: "Lead",
+    entityId: lead.id,
+  });
 
   res.json({ lead });
 });
@@ -549,6 +624,11 @@ r.post("/:id/calls", auth, async (req, res) => {
       .json({ message: "You do not have access to this lead" });
   }
 
+  const CALL_RESULTS = ["CONNECTED", "NOT_PICKED", "BUSY", "WRONG_NUMBER", "CALLBACK_REQUESTED"];
+  if (!CALL_RESULTS.includes(req.body?.result)) {
+    return res.status(400).json({ message: "Invalid call result" });
+  }
+
   const call = await Call.create({
     lead: req.params.id,
     user: req.user!.id,
@@ -561,10 +641,14 @@ r.post("/:id/calls", auth, async (req, res) => {
 
   const status = req.body.result === "NOT_PICKED" ? "FOLLOW_UP" : "CONTACTED";
 
+  const existingLead = await Lead.findById(req.params.id).select("status firstContactAt").lean();
+  const terminal = ["WON", "LOST", "NOT_INTERESTED", "INTERESTED", "SCHEDULED"].includes(String(existingLead?.status));
   await Lead.findByIdAndUpdate(req.params.id, {
-    status,
+    ...(terminal ? {} : { status }),
     lastContactAt: new Date(),
+    ...(existingLead?.firstContactAt ? {} : { firstContactAt: new Date() }),
   });
+  void refreshLeadScore(String(req.params.id));
 
   await logActivity({
     lead: req.params.id,
@@ -595,8 +679,8 @@ r.post("/:id/calls", auth, async (req, res) => {
   const io = req.app.get("io");
   if (io && populatedLead) {
     const payload = { call: { ...call.toObject(), lead: populatedLead }, lead: populatedLead };
-    io.to("role:ADMIN").emit("call_logged", payload);
-    io.to(`user:${req.user!.id}`).emit("call_logged", payload);
+    const scope = await leadScope(req.params.id);
+    emitLeadEvent(io, "call_logged", payload, { ...scope, assignedTo: scope.assignedTo || req.user!.id });
   }
 
   res.status(201).json({ call });
@@ -709,18 +793,407 @@ r.post("/:id/followups", auth, async (req, res) => {
 
   const io = req.app.get("io");
 
+  void refreshLeadScore(String(req.params.id));
   if (io && populatedFollowup) {
     const payload = {
       followUp: populatedFollowup,
       action: "FOLLOWUP_CREATED",
       actorId: req.user!.id,
     };
-
-    io.to("role:ADMIN").emit("followup_updated", payload);
-    io.to(`user:${assignedUser.id}`).emit("followup_updated", payload);
+    const scope = await leadScope(req.params.id);
+    emitLeadEvent(io, "followup_updated", payload, { business: scope.business, assignedTo: assignedUser.id });
   }
 
   res.status(201).json({ followUp: populatedFollowup ?? f });
+});
+
+const leadInputSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(120),
+  phone: z.string().trim().max(30).optional().default(""),
+  email: z.union([z.string().trim().toLowerCase().email(), z.literal("")]).optional().default(""),
+  businessProject: z.union([objectId, z.literal("")]).optional().default(""),
+  source: z.enum(["MANUAL", "WALK_IN", "REFERRAL", "PHONE", "WEBSITE", "IMPORT", "OTHER"]).default("MANUAL"),
+  campaign: z.string().trim().max(120).optional().default(""),
+  notes: z.string().trim().max(2000).optional().default(""),
+  tags: z.array(z.string().trim().min(1).max(40)).max(15).optional().default([]),
+  assignedTo: z.union([objectId, z.literal("")]).optional().default(""),
+});
+
+/** Resolve which project ids the current user may create leads under. */
+async function allowedProjectIdsForCreate(req: any): Promise<string[] | "ALL"> {
+  if (req.user.role === "ADMIN" || req.user.role === "MANAGER") return "ALL";
+  if (req.user.role === "BUSINESS") return (await getBusinessOwnerProjectIds(req.user)).map(String);
+  return (req.user.assignedProjects || []).map(String);
+}
+
+async function createLeadFromInput(
+  req: any,
+  input: z.infer<typeof leadInputSchema>,
+  opts: { skipDuplicates?: boolean } = {},
+) {
+  const allowed = await allowedProjectIdsForCreate(req);
+  let projectId: string | undefined = input.businessProject || undefined;
+  if (projectId && allowed !== "ALL" && !allowed.includes(projectId)) {
+    throw Object.assign(new Error("You cannot add leads to this project"), { statusCode: 403 });
+  }
+  if (!projectId && allowed !== "ALL" && allowed.length === 1) projectId = allowed[0];
+  if (!projectId && req.user.role !== "ADMIN" && req.user.role !== "MANAGER") {
+    throw Object.assign(new Error("Select a project for this lead"), { statusCode: 400 });
+  }
+
+  const project: any = projectId ? await BusinessProject.findById(projectId).select("_id business name").lean() : null;
+  if (projectId && !project) throw Object.assign(new Error("Project not found"), { statusCode: 400 });
+
+  const phone = input.phone ? normalizePhone(input.phone) || input.phone : undefined;
+  const duplicate = await findDuplicate({ phone, email: input.email || undefined, business: project?.business });
+  if (duplicate && opts.skipDuplicates) return { lead: null, duplicate };
+
+  // Owner: a SALES user creating a lead owns it; ADMIN/BUSINESS may pick a salesperson in scope.
+  let assignee: string | undefined;
+  if (req.user.role === "SALES") assignee = req.user.id;
+  else if (input.assignedTo) {
+    if (!(await salesBelongsToProject(input.assignedTo, project?._id))) {
+      throw Object.assign(new Error("Selected salesperson does not work on this project"), { statusCode: 400 });
+    }
+    assignee = input.assignedTo;
+  }
+
+  const lead = await Lead.create({
+    name: input.name,
+    phone,
+    email: input.email || undefined,
+    source: input.source,
+    campaign: input.campaign || undefined,
+    businessProject: project?._id,
+    business: project?.business,
+    assignedTo: assignee,
+    assignedAt: assignee ? new Date() : undefined,
+    assignmentSource: assignee ? "MANUAL" : undefined,
+    deliveryStatus: "RELEASED",
+    tags: input.tags,
+    notes: input.notes || undefined,
+    duplicateOf: duplicate?._id,
+    createdBy: req.user.id,
+    score: 40,
+  });
+
+  await logActivity({
+    lead: lead.id,
+    actor: req.user.id,
+    type: "LEAD_CREATED",
+    title: "Lead added manually",
+    description: `${input.source.replace(/_/g, " ").toLowerCase()} lead${project ? ` · ${project.name}` : ""}${duplicate ? " · possible duplicate" : ""}`,
+  });
+  if (input.notes) {
+    await Note.create({ lead: lead._id, author: req.user.id, body: input.notes });
+  }
+  void refreshLeadScore(lead.id);
+  emitLeadEvent(req.app.get("io"), "new_lead", { lead: lead.toObject() }, { assignedTo: assignee, business: project?.business });
+  return { lead, duplicate };
+}
+
+/**
+ * POST /api/leads
+ * Create a lead manually (walk-in, referral, phone enquiry).
+ */
+r.post("/", auth, validateBody(leadInputSchema), async (req, res) => {
+  if (!req.body.phone && !req.body.email) {
+    return res.status(400).json({ message: "Add at least a phone number or an email" });
+  }
+  try {
+    const { lead, duplicate } = await createLeadFromInput(req, req.body);
+    res.status(201).json({ lead, duplicate });
+  } catch (error: any) {
+    res.status(error.statusCode || 500).json({ message: error.message || "Could not create lead" });
+  }
+});
+
+const importSchema = z.object({
+  businessProject: z.union([objectId, z.literal("")]).optional().default(""),
+  skipDuplicates: z.boolean().default(true),
+  rows: z
+    .array(
+      z.object({
+        name: z.string().trim().max(120).optional().default(""),
+        phone: z.string().trim().max(30).optional().default(""),
+        email: z.string().trim().max(160).optional().default(""),
+        campaign: z.string().trim().max(120).optional().default(""),
+        notes: z.string().trim().max(2000).optional().default(""),
+      }),
+    )
+    .min(1)
+    .max(1000),
+});
+
+/**
+ * POST /api/leads/import
+ * Bulk create leads from parsed CSV rows (max 1000 per request).
+ */
+r.post("/import", auth, roles("ADMIN", "MANAGER", "BUSINESS"), validateBody(importSchema), async (req, res) => {
+  const body = req.body as z.infer<typeof importSchema>;
+  const result = { created: 0, duplicates: 0, failed: 0, errors: [] as { row: number; message: string }[] };
+
+  for (let i = 0; i < body.rows.length; i++) {
+    const row = body.rows[i];
+    const parsed = leadInputSchema.safeParse({
+      name: row.name || row.phone || row.email,
+      phone: row.phone,
+      email: row.email && /\S+@\S+\.\S+/.test(row.email) ? row.email : "",
+      campaign: row.campaign,
+      notes: row.notes,
+      businessProject: body.businessProject,
+      source: "IMPORT",
+    });
+    if (!parsed.success || (!row.phone && !row.email)) {
+      result.failed++;
+      if (result.errors.length < 50) {
+        result.errors.push({
+          row: i + 2,
+          message: parsed.success ? "Missing phone and email" : parsed.error.issues[0]?.message || "Invalid row",
+        });
+      }
+      continue;
+    }
+    try {
+      const out = await createLeadFromInput(req, parsed.data, { skipDuplicates: body.skipDuplicates });
+      if (!out.lead) result.duplicates++;
+      else result.created++;
+    } catch (error: any) {
+      result.failed++;
+      if (result.errors.length < 50) result.errors.push({ row: i + 2, message: error.message });
+    }
+  }
+
+  await logAudit({
+    actor: req.user!.id,
+    action: "LEADS_IMPORTED",
+    entity: "Lead",
+    entityId: req.user!.id,
+    after: { created: result.created, duplicates: result.duplicates, failed: result.failed },
+    ip: req.ip,
+  });
+  res.json(result);
+});
+
+const leadEditSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  phone: z.string().trim().max(30).optional(),
+  email: z.union([z.string().trim().toLowerCase().email(), z.literal("")]).optional(),
+  tags: z.array(z.string().trim().min(1).max(40)).max(15).optional(),
+  dealValue: z.number().min(0).nullable().optional(),
+  whatsappOptOut: z.boolean().optional(),
+});
+
+/**
+ * PATCH /api/leads/:id
+ * Edit lead contact details, tags, deal value and WhatsApp opt-out.
+ */
+r.patch("/:id", auth, validateBody(leadEditSchema), async (req, res) => {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
+    return res.status(403).json({ message: "You do not have access to this lead" });
+  }
+  const body = req.body as z.infer<typeof leadEditSchema>;
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+  const before = {
+    name: lead.name,
+    phone: lead.phone,
+    email: lead.email,
+    tags: lead.tags,
+    dealValue: lead.dealValue,
+    whatsappOptOut: lead.whatsappOptOut,
+  };
+  if (body.name !== undefined) lead.name = body.name;
+  if (body.phone !== undefined) lead.phone = body.phone ? normalizePhone(body.phone) || body.phone : undefined;
+  if (body.email !== undefined) lead.email = body.email || undefined;
+  if (body.tags !== undefined) lead.tags = Array.from(new Set(body.tags));
+  if (body.dealValue !== undefined) lead.dealValue = body.dealValue ?? undefined;
+  if (body.whatsappOptOut !== undefined) lead.whatsappOptOut = body.whatsappOptOut;
+  await lead.save();
+
+  await logActivity({ lead: lead.id, actor: req.user!.id, type: "LEAD_UPDATED", title: "Lead details updated" });
+  await logAudit({ actor: req.user!.id, action: "LEAD_UPDATED", entity: "Lead", entityId: lead.id, before, after: body, ip: req.ip });
+  emitLeadEvent(req.app.get("io"), "lead_updated", { lead: lead.toObject(), reason: "EDITED" }, await leadScope(lead._id));
+  res.json({ lead });
+});
+
+const bulkSchema = z.object({
+  ids: z.array(objectId).min(1).max(200),
+  action: z.enum(["status", "assign", "tag"]),
+  status: z.string().optional(),
+  lostReason: z.string().trim().max(300).optional(),
+  userId: objectId.optional(),
+  tag: z.string().trim().min(1).max(40).optional(),
+});
+
+/**
+ * POST /api/leads/bulk
+ * Bulk status change / assignment / tagging for up to 200 leads in the caller's scope.
+ */
+r.post("/bulk", auth, validateBody(bulkSchema), async (req, res) => {
+  const body = req.body as z.infer<typeof bulkSchema>;
+  const scope: any = await visibleLeadFilter(req);
+  const leads = await Lead.find({ ...scope, _id: { $in: body.ids } }).select("_id name businessProject assignedTo status lostReason");
+  if (!leads.length) return res.status(404).json({ message: "No accessible leads selected" });
+
+  let updated = 0;
+  const io = req.app.get("io");
+
+  if (body.action === "status") {
+    if (!body.status || !VALID_STATUSES.includes(body.status)) return res.status(400).json({ message: "Invalid status" });
+    if ((body.status === "LOST" || body.status === "NOT_INTERESTED") && !body.lostReason) {
+      return res.status(400).json({ message: "A reason is required for lost / not interested" });
+    }
+    for (const lead of leads) {
+      const prev = lead.status;
+      lead.status = body.status as any;
+      if (body.lostReason) lead.lostReason = body.lostReason;
+      await lead.save();
+      await logActivity({
+        lead: lead.id,
+        actor: req.user!.id,
+        type: "STATUS_CHANGED",
+        title: "Lead status changed (bulk)",
+        description: `${prev} → ${lead.status}`,
+      });
+      void refreshLeadScore(lead.id);
+      updated++;
+    }
+  } else if (body.action === "assign") {
+    if (!["ADMIN", "MANAGER", "BUSINESS"].includes(req.user!.role)) return res.status(403).json({ message: "Forbidden" });
+    const user = await User.findOne({ _id: body.userId, role: "SALES", isActive: true }).select("_id name");
+    if (!user) return res.status(404).json({ message: "Active salesperson not found" });
+    for (const lead of leads) {
+      if (!(await salesBelongsToProject(user.id, lead.businessProject))) continue;
+      lead.assignedTo = user._id as any;
+      lead.assignedAt = new Date();
+      lead.assignmentSource = "MANUAL";
+      await lead.save();
+      await logActivity({
+        lead: lead.id,
+        actor: req.user!.id,
+        type: "LEAD_REASSIGNED",
+        title: "Lead reassigned (bulk)",
+        description: `Assigned to ${user.name}.`,
+      });
+      updated++;
+    }
+    if (updated) {
+      await Notification.create({
+        user: user._id,
+        type: "LEAD_ASSIGNED",
+        title: "Leads assigned to you",
+        message: `${updated} lead${updated === 1 ? " was" : "s were"} assigned to you.`,
+        entityType: "User",
+        entityId: user.id,
+      });
+      io?.to(`user:${user.id}`).emit("leads_assigned", { count: updated });
+    }
+  } else if (body.action === "tag") {
+    if (!body.tag) return res.status(400).json({ message: "Tag is required" });
+    const result = await Lead.updateMany({ _id: { $in: leads.map((l) => l._id) } }, { $addToSet: { tags: body.tag } });
+    updated = result.modifiedCount;
+  }
+
+  await logAudit({
+    actor: req.user!.id,
+    action: `LEADS_BULK_${body.action.toUpperCase()}`,
+    entity: "Lead",
+    entityId: req.user!.id,
+    after: { count: updated, status: body.status, userId: body.userId, tag: body.tag },
+    ip: req.ip,
+  });
+  io?.to("role:ADMIN").emit("lead_updated", { reason: "BULK", count: updated });
+  res.json({ updated, skipped: leads.length - updated });
+});
+
+const noteSchema = z.object({
+  body: z.string().trim().min(1, "Note cannot be empty").max(4000),
+  mentions: z.array(objectId).max(10).optional().default([]),
+});
+
+/**
+ * POST /api/leads/:id/notes
+ * Add a free-text note; @mentioned teammates (who can see the lead) are notified.
+ */
+r.post("/:id/notes", auth, validateBody(noteSchema), async (req, res) => {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
+    return res.status(403).json({ message: "You do not have access to this lead" });
+  }
+  const body = req.body as z.infer<typeof noteSchema>;
+  const lead = await Lead.findById(req.params.id).select("_id name assignedTo business businessProject");
+  if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+  // Only people who can see the lead can be mentioned.
+  const scope = await leadScope(lead._id);
+  const mentionable = await User.find({ _id: { $in: body.mentions }, isActive: true })
+    .select("_id role business")
+    .lean();
+  const validMentions = mentionable
+    .filter(
+      (u: any) =>
+        u.role === "ADMIN" ||
+        u.role === "MANAGER" ||
+        String(u._id) === String(lead.assignedTo) ||
+        (u.role === "BUSINESS" && scope.business && String(u.business) === String(scope.business)),
+    )
+    .map((u: any) => u._id);
+
+  const note = await Note.create({ lead: lead._id, author: req.user!.id, body: body.body, mentions: validMentions });
+  await logActivity({
+    lead: lead.id,
+    actor: req.user!.id,
+    type: "NOTE_ADDED",
+    title: "Note added",
+    description: body.body.slice(0, 140),
+  });
+
+  const recipients = validMentions.filter((id: any) => String(id) !== req.user!.id);
+  if (recipients.length) {
+    await Notification.insertMany(
+      recipients.map((id: any) => ({
+        user: id,
+        type: "MENTION",
+        title: `${req.user!.name} mentioned you`,
+        message: `${lead.name}: ${body.body.slice(0, 160)}`,
+        entityType: "Lead",
+        entityId: lead.id,
+      })),
+    );
+    const io = req.app.get("io");
+    for (const id of recipients) io?.to(`user:${String(id)}`).emit("notification", { type: "MENTION", leadId: lead.id });
+  }
+
+  const populated = await Note.findById(note._id).populate("author", "name role profilePhotoUrl").lean();
+  res.status(201).json({ note: populated });
+});
+
+r.patch("/:id/notes/:noteId", auth, validateBody(z.object({ pinned: z.boolean() })), async (req, res) => {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
+    return res.status(403).json({ message: "You do not have access to this lead" });
+  }
+  const note = await Note.findOneAndUpdate(
+    { _id: req.params.noteId, lead: req.params.id },
+    { $set: { pinned: req.body.pinned } },
+    { new: true },
+  );
+  if (!note) return res.status(404).json({ message: "Note not found" });
+  res.json({ note });
+});
+
+r.delete("/:id/notes/:noteId", auth, async (req, res) => {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
+    return res.status(403).json({ message: "You do not have access to this lead" });
+  }
+  const note = await Note.findOne({ _id: req.params.noteId, lead: req.params.id });
+  if (!note) return res.status(404).json({ message: "Note not found" });
+  const isAdmin = req.user!.role === "ADMIN" || req.user!.role === "MANAGER";
+  if (!isAdmin && String(note.author) !== req.user!.id) {
+    return res.status(403).json({ message: "You can only delete your own notes" });
+  }
+  await note.deleteOne();
+  res.json({ success: true });
 });
 
 /**

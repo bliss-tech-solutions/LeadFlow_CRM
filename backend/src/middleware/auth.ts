@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
+import { getLiveUser } from "../utils/userCache";
 
 export type AuthUser = {
   id: string;
@@ -20,30 +21,75 @@ declare global {
   }
 }
 
-export function auth(req: Request, res: Response, next: NextFunction) {
+type TokenPayload = Partial<AuthUser> & { id?: string; tv?: number };
+
+export function signUserToken(u: {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  business?: unknown;
+  assignedProjects?: unknown[];
+  businessProject?: unknown;
+  tokenVersion?: number;
+}) {
+  return jwt.sign(
+    {
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      business: u.business ? String(u.business) : undefined,
+      assignedProjects: Array.isArray(u.assignedProjects) ? u.assignedProjects.map(String) : [],
+      businessProject: u.businessProject ? String(u.businessProject) : undefined,
+      tv: Number(u.tokenVersion || 0),
+    },
+    env.JWT_SECRET,
+    { expiresIn: env.JWT_EXPIRES_IN as any },
+  );
+}
+
+/**
+ * Verify a JWT and resolve it against the live user record.
+ * Returns null when the token is invalid, the user no longer exists, was
+ * blocked, or the token was revoked (tokenVersion bumped by "log out everywhere").
+ */
+export async function resolveToken(token: string): Promise<AuthUser | null> {
+  let decoded: TokenPayload;
+  try {
+    decoded = jwt.verify(token, env.JWT_SECRET) as TokenPayload;
+  } catch {
+    return null;
+  }
+  if (!decoded.id) return null;
+
+  const live = await getLiveUser(String(decoded.id));
+  if (!live || !live.isActive) return null;
+  if (Number(decoded.tv || 0) !== live.tokenVersion) return null;
+
+  // Authorization data always comes from the database, never from stale token claims.
+  return {
+    id: live.id,
+    name: live.name,
+    email: live.email,
+    role: live.role,
+    business: live.business,
+    assignedProjects: live.assignedProjects,
+    businessProject: live.businessProject,
+  };
+}
+
+export async function auth(req: Request, res: Response, next: NextFunction) {
   const h = req.headers.authorization;
   if (!h?.startsWith("Bearer "))
     return res.status(401).json({ message: "Authentication required" });
-  try {
-    const decoded = jwt.verify(h.slice(7), env.JWT_SECRET) as Partial<AuthUser> & { id?: string };
-    if (!decoded.id || !decoded.email || !decoded.role || !decoded.name) {
-      return res.status(401).json({ message: "Invalid authentication token" });
-    }
-    req.user = {
-      id: String(decoded.id),
-      name: String(decoded.name),
-      email: String(decoded.email),
-      role: decoded.role as AuthUser["role"],
-      business: decoded.business ? String(decoded.business) : undefined,
-      assignedProjects: Array.isArray(decoded.assignedProjects)
-        ? decoded.assignedProjects.map(String)
-        : undefined,
-      businessProject: decoded.businessProject ? String(decoded.businessProject) : undefined,
-    };
-    next();
-  } catch {
-    return res.status(401).json({ message: "Invalid or expired token" });
+
+  const user = await resolveToken(h.slice(7));
+  if (!user) {
+    return res.status(401).json({ message: "Session expired or account disabled. Please sign in again." });
   }
+  req.user = user;
+  next();
 }
 
 export function roles(...allowed: AuthUser["role"][]) {
@@ -52,4 +98,8 @@ export function roles(...allowed: AuthUser["role"][]) {
       return res.status(403).json({ message: "Forbidden" });
     next();
   };
+}
+
+export function isAdminRole(role?: string) {
+  return role === "ADMIN" || role === "MANAGER";
 }

@@ -6,6 +6,9 @@ import bcrypt from "bcryptjs";
 import { User } from "../models/User";
 import { auth, roles } from "../middleware/auth";
 import { logAudit } from "../utils/activity";
+import { containsRegex, exactRegex } from "../utils/regex";
+import { getUserBusinessIds } from "../utils/tenant";
+import { validateBody, z } from "../middleware/validate";
 import {
   holdBusinessLeads,
   releaseBusinessHeldLeads,
@@ -37,8 +40,11 @@ r.get("/", auth, async (req, res) => {
         filter._id = proj.business;
       }
     }
+    if (!filter._id) filter._id = { $in: [] };
   } else if (!isAdmin(req)) {
+    // SALES: only the business(es) they work for.
     filter.isActive = true;
+    filter._id = { $in: await getUserBusinessIds(req.user!) };
   } else {
     // Admin / Manager status filtering
     if (status === "ACTIVE") {
@@ -52,9 +58,9 @@ r.get("/", auth, async (req, res) => {
   const querySearch = String(search).trim();
   if (querySearch) {
     filter.$or = [
-      { name: { $regex: querySearch, $options: "i" } },
-      { detail: { $regex: querySearch, $options: "i" } },
-      { contactNo: { $regex: querySearch, $options: "i" } },
+      { name: containsRegex(querySearch) },
+      { detail: containsRegex(querySearch) },
+      { contactNo: containsRegex(querySearch) },
     ];
   }
 
@@ -113,6 +119,9 @@ r.get("/", auth, async (req, res) => {
       stages: stageCountMap.get(String(b._id)) || { ongoing: 0, upcoming: 0, completed: 0 },
       businessAdmin: adminUserMap.get(String(b._id)) || null,
     };
+    if (req.user?.role === "SALES" && item.businessAdmin) {
+      item.businessAdmin = { _id: item.businessAdmin._id, name: item.businessAdmin.name };
+    }
     if (!isUserAdmin) {
       delete item.leadLimit;
       delete item.leadLimitType;
@@ -140,7 +149,7 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   }
 
   const existing = await Business.findOne({
-    name: { $regex: `^${String(name).trim()}$`, $options: "i" },
+    name: exactRegex(String(name).trim()),
     isActive: true,
   });
 
@@ -224,11 +233,17 @@ r.get("/:id", auth, async (req, res) => {
     }
   }
 
+  const projectFilter: Record<string, unknown> = { business: business._id, isActive: true };
+  if (req.user?.role === "SALES") {
+    const allowed = await getUserBusinessIds(req.user);
+    if (!allowed.includes(String(business._id))) {
+      return res.status(403).json({ message: "Access denied to this business." });
+    }
+    if (req.user.assignedProjects?.length) projectFilter._id = { $in: req.user.assignedProjects };
+  }
+
   const [projects, businessAdmin] = await Promise.all([
-    BusinessProject.find({
-      business: business._id,
-      isActive: true,
-    })
+    BusinessProject.find(projectFilter)
       .sort({ createdAt: -1 })
       .lean(),
     User.findOne({
@@ -243,12 +258,19 @@ r.get("/:id", auth, async (req, res) => {
   if (!isAdmin(req)) {
     delete businessData.leadLimit;
     delete businessData.leadLimitType;
+    for (const p of projects as any[]) {
+      delete p.leadLimit;
+      delete p.leadLimitType;
+    }
   }
 
   res.json({
     business: {
       ...businessData,
-      businessAdmin: businessAdmin || null,
+      businessAdmin:
+        req.user?.role === "SALES" && businessAdmin
+          ? { _id: businessAdmin._id, name: businessAdmin.name }
+          : businessAdmin || null,
       projects,
     },
   });
@@ -474,6 +496,60 @@ r.patch("/:id/admin-password", auth, roles("ADMIN", "MANAGER", "BUSINESS"), asyn
   });
 
   res.json({ message: "Business admin password updated successfully." });
+});
+
+function canManageBusiness(req: any, businessId: string) {
+  if (isAdmin(req)) return true;
+  return req.user?.role === "BUSINESS" && String(req.user.business) === String(businessId);
+}
+
+/**
+ * GET /api/businesses/:id/settings
+ * Automation & team settings (SLA, auto-reassign, WhatsApp permissions, digest, assignment strategy).
+ */
+r.get("/:id/settings", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
+  if (!canManageBusiness(req, String(req.params.id))) {
+    return res.status(403).json({ message: "Access denied." });
+  }
+  const business = await Business.findById(req.params.id).select("name settings").lean();
+  if (!business) return res.status(404).json({ message: "Business not found." });
+  res.json({ settings: business.settings || {} });
+});
+
+const settingsSchema = z.object({
+  autoReassignHours: z.number().int().min(0).max(168).optional(),
+  slaMinutes: z.number().int().min(1).max(1440).optional(),
+  salesCanSendWhatsApp: z.boolean().optional(),
+  dailyDigest: z.boolean().optional(),
+  assignmentStrategy: z.enum(["LEAST_LOADED", "ROUND_ROBIN"]).optional(),
+});
+
+r.patch("/:id/settings", auth, roles("ADMIN", "MANAGER", "BUSINESS"), validateBody(settingsSchema), async (req, res) => {
+  if (!canManageBusiness(req, String(req.params.id))) {
+    return res.status(403).json({ message: "Access denied." });
+  }
+  const business = await Business.findById(req.params.id);
+  if (!business) return res.status(404).json({ message: "Business not found." });
+
+  const before = { ...((business.toObject() as any).settings || {}) };
+  const current = (business as any).settings || {};
+  for (const [key, value] of Object.entries(req.body)) {
+    if (value !== undefined) current[key] = value;
+  }
+  (business as any).settings = current;
+  business.markModified("settings");
+  await business.save();
+
+  await logAudit({
+    actor: req.user!.id,
+    action: "BUSINESS_SETTINGS_UPDATED",
+    entity: "Business",
+    entityId: business.id,
+    before,
+    after: req.body,
+    ip: req.ip,
+  });
+  res.json({ settings: (business.toObject() as any).settings });
 });
 
 export default r;

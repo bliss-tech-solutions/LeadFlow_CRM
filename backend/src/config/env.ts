@@ -21,12 +21,36 @@ const schema = z.object({
   AWS_ACCESS_KEY_ID: z.string().optional(),
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_S3_PRESIGN_EXPIRES: z.coerce.number().default(900),
+
+  // Outbound email (password reset, digests). Optional: when unset, emails are logged in development only.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().default("LeadFlow CRM <no-reply@leadflow.local>"),
+
+  // WhatsApp (QR-linked device via Baileys)
+  WA_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false" && v !== "0"),
+  WA_ENCRYPTION_KEY: z.string().optional(),
+  WA_DAILY_LIMIT: z.coerce.number().default(150),
+  WA_MIN_GAP_MS: z.coerce.number().default(4000),
+  WA_MAX_GAP_MS: z.coerce.number().default(9000),
+  WA_DEFAULT_COUNTRY_CODE: z.string().default("91"),
+
+  // Lead SLA: minutes before an uncontacted NEW lead raises an alert.
+  LEAD_SLA_MINUTES: z.coerce.number().default(15),
+
+  // Optional error tracking
+  SENTRY_DSN: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);
 
 if (env.NODE_ENV === "production") {
-  if (env.MONGO_URI === "mongodb://127.0.0.1:27017/leadflow_crm") {
+  if (!process.env.MONGO_URI) {
     throw new Error("MONGO_URI must be configured for production");
   }
   if (env.JWT_SECRET === "dev-secret-change-me" || env.JWT_SECRET.length < 32) {
@@ -41,7 +65,13 @@ if (env.NODE_ENV === "production") {
   if (!env.FRONTEND_URL.trim()) {
     throw new Error("FRONTEND_URL must contain the allowed production frontend origin(s)");
   }
+  if (env.WA_ENABLED && (!env.WA_ENCRYPTION_KEY || env.WA_ENCRYPTION_KEY.length < 32)) {
+    throw new Error("WA_ENCRYPTION_KEY must be a 32+ character secret in production (or set WA_ENABLED=false)");
+  }
   if (env.PORT < 1 || env.PORT > 65535) {
     throw new Error("PORT must be between 1 and 65535");
   }
 }
+
+/** First configured frontend origin, used to build links in emails. */
+export const appUrl = (env.FRONTEND_URL.split(",")[0] || "http://localhost:3000").trim().replace(/\/$/, "");

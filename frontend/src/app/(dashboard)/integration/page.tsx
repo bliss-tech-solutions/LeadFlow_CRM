@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import Topbar from "../../../components/Topbar";
-import { api } from "../../../lib/api";
+import { api, API } from "../../../lib/api";
 import { Copy, Play, Webhook } from "lucide-react";
 export default function Integration() {
   const [name, setName] = useState("Demo Meta Lead");
@@ -19,10 +19,8 @@ export default function Integration() {
       setResult(e.message);
     }
   }
-  const webhook =
-    typeof window !== "undefined"
-      ? `${window.location.origin.replace(":3000", ":4000")}/api/meta/webhook`
-      : "http://localhost:4000/api/meta/webhook";
+  // API already falls back to http://localhost:4000/api when NEXT_PUBLIC_API_URL is unset.
+  const webhook = `${API.replace(/\/$/, "")}/meta/webhook`;
   return (
     <div className="space-y-5">
       <Topbar

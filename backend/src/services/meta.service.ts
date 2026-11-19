@@ -10,6 +10,22 @@ import { User } from "../models/User";
 import { Notification } from "../models/Notification";
 import { env } from "../config/env";
 import { logActivity } from "../utils/activity";
+import { logger } from "../config/logger";
+import { emitLeadEvent } from "../sockets";
+import { normalizePhone, phoneTail } from "../utils/phone";
+import { escapeRegex } from "../utils/regex";
+import { refreshLeadScore } from "../utils/scoring";
+
+/** Mask personal data before it reaches logs. */
+export function maskPII(value?: unknown) {
+  const v = String(value ?? "");
+  if (!v) return "";
+  if (v.includes("@")) {
+    const [user, domain] = v.split("@");
+    return `${user.slice(0, 2)}***@${domain}`;
+  }
+  return v.length > 4 ? `${"*".repeat(Math.max(0, v.length - 4))}${v.slice(-4)}` : "****";
+}
 
 type MetaField = {
   name: string;
@@ -182,31 +198,22 @@ export async function fetchMetaLeadDetails(
     throw new Error("Meta leadgen_id is required");
   }
 
-  if (!env.META_ACCESS_TOKEN || !env.META_GRAPH_VERSION) {
-    throw new Error(
-      "Meta access token or Graph API version is not configured",
-    );
+  if (!env.META_ACCESS_TOKEN) {
+    throw new Error("META_ACCESS_TOKEN is not configured; cannot fetch Meta lead details");
   }
 
-  let url = "";
+  const graphVersion = env.META_GRAPH_VERSION || "v21.0";
+  const params = new URLSearchParams({
+    fields: "id,created_time,field_data,ad_id,form_id,campaign_name,ad_name,platform",
+    access_token: env.META_ACCESS_TOKEN,
+  });
+  // META_LEAD_FETCH_URL is the Graph host (e.g. https://graph.facebook.com or a proxy).
+  // The API version is appended unless the configured URL already contains one.
+  let base = (env.META_LEAD_FETCH_URL || "https://graph.facebook.com").trim().replace(/\/+$/, "");
+  if (!/\/v\d+(\.\d+)?$/.test(base)) base = `${base}/${graphVersion}`;
+  const url = `${base}/${encodeURIComponent(leadgenId)}?${params.toString()}`;
 
-  if (env.META_LEAD_FETCH_URL && env.META_ACCESS_TOKEN) {
-    const params = new URLSearchParams({
-      fields: "id,created_time,field_data",
-      access_token: env.META_ACCESS_TOKEN,
-    });
-
-    url = `https://graph.facebook.com/${env.META_GRAPH_VERSION}/${encodeURIComponent(
-      leadgenId,
-    )}?${params.toString()}`;
-  }
-
-  console.log(
-    `[meta] fetching lead details` +
-      ` leadgen_id=${leadgenId}` +
-      `${pageId ? ` page_id=${pageId}` : ""}` +
-      ` graph=${env.META_GRAPH_VERSION}`,
-  );
+  logger.info("[meta] fetching lead details", { leadgenId, pageId, graphVersion });
 
   const response = await fetch(url);
 
@@ -221,16 +228,15 @@ export async function fetchMetaLeadDetails(
   }
 
   if (!response.ok) {
-    console.error("[meta] lead retrieval failed", {
+    logger.error("[meta] lead retrieval failed", {
       status: response.status,
       leadgenId,
       pageId,
-      graphVersion: env.META_GRAPH_VERSION,
-      error: responseData?.error ?? responseText,
+      error: responseData?.error?.message ?? "unknown",
     });
 
     throw new Error(
-      `Meta lead retrieval failed: ${response.status} ${responseText}`,
+      `Meta lead retrieval failed: ${response.status} ${responseData?.error?.message ?? ""}`.trim(),
     );
   }
 
@@ -240,9 +246,7 @@ export async function fetchMetaLeadDetails(
     );
   }
 
-  console.log(
-    `[meta] lead details fetched successfully leadgen_id=${leadgenId}`,
-  );
+  logger.info("[meta] lead details fetched", { leadgenId });
 
   return responseData;
 }
@@ -282,7 +286,7 @@ export function normalizeMetaPayload(payload: any, metaLead: any = null, source 
     source,
 
     meta: {
-      businessId: undefined,
+      businessId: undefined as string | undefined,
       fieldData: fields,
       formData: formData || undefined,
 
@@ -314,16 +318,8 @@ export async function ingestMetaLead(
   io: any,
   options: { fetchDetails?: boolean; source?: string } = {},
 ) {
-  console.log(
-    "[meta] incoming webhook payload:",
-    JSON.stringify(payload, null, 2),
-  );
-
-  const webhookValue = extractWebhookValue(payload);
-
   const leadgenId = extractLeadgenId(payload);
-
-  console.log(`[meta] extracted leadgen_id=${leadgenId ?? "NOT_FOUND"}`);
+  logger.info("[meta] ingesting lead", { leadgenId: leadgenId ?? "NOT_FOUND", source: options.source ?? "META" });
 
   let metaLead: any = null;
 
@@ -346,15 +342,9 @@ export async function ingestMetaLead(
   }
 
   if (!data.metaLeadId) {
-    console.error(
-      "[meta] leadgen_id not found. Payload:",
-      JSON.stringify(payload, null, 2),
-    );
-
+    logger.error("[meta] leadgen_id not found in payload", { keys: Object.keys(payload || {}) });
     throw new Error("Meta webhook did not contain a leadgen_id");
   }
-
-  console.log(`[meta] processing leadgen_id=${data.metaLeadId}`);
 
   /**
    * Prevent duplicate Meta leads.
@@ -364,7 +354,7 @@ export async function ingestMetaLead(
   });
 
   if (existing) {
-    console.log(`[meta] duplicate lead ignored: ${data.metaLeadId}`);
+    logger.info("[meta] duplicate lead ignored", { leadgenId: data.metaLeadId });
 
     return {
       lead: existing,
@@ -378,7 +368,6 @@ export async function ingestMetaLead(
    * with fallbacks to project name matching and cohort matching.
    */
   const cleanStr = (s?: any) => (s ? String(s).trim().toLowerCase() : "");
-  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   const leadFormId = data.meta?.formId ? String(data.meta.formId).trim() : "";
   const leadPageId = data.meta?.pageId ? String(data.meta.pageId).trim() : "";
@@ -468,6 +457,25 @@ export async function ingestMetaLead(
    * Apply the global overnight delivery schedule. Held leads are persisted
    * immediately but are not assigned, notified or emitted until release.
    */
+  const businessId: any = project ? ((project as any).business?._id ?? (project as any).business) : undefined;
+  const normalizedPhone = data.phone ? normalizePhone(data.phone, env.WA_DEFAULT_COUNTRY_CODE) : null;
+
+  // Repeat-enquiry detection: same phone/email already exists for this business.
+  let duplicateOf: any = undefined;
+  {
+    const or: any[] = [];
+    const tail = phoneTail(data.phone);
+    if (tail) or.push({ phone: { $regex: `${tail}$` } });
+    if (data.email) or.push({ email: { $regex: `^${escapeRegex(String(data.email))}$`, $options: "i" } });
+    if (or.length) {
+      const prev = await Lead.findOne({ $or: or, ...(businessId ? { business: businessId } : {}) })
+        .sort({ createdAt: 1 })
+        .select("_id")
+        .lean();
+      duplicateOf = prev?._id;
+    }
+  }
+
   const schedule = await getDeliverySchedule();
   const limitCheck = await isLeadLimitReached(project?._id);
   const shouldHold = isWithinHoldWindow(schedule) || limitCheck.reached;
@@ -479,13 +487,16 @@ export async function ingestMetaLead(
   const lead = await Lead.create({
     name: data.name,
     email: data.email,
-    phone: data.phone,
+    phone: normalizedPhone || data.phone,
     source: data.source,
     campaign: data.campaign,
     formName: data.formName,
     metaLeadId: data.metaLeadId,
     meta: data.meta,
     businessProject: project?._id,
+    business: businessId,
+    duplicateOf,
+    tags: duplicateOf ? ["repeat-enquiry"] : [],
     assignedTo: assignee?._id,
     assignedAt: assignee ? new Date() : undefined,
     assignmentSource: assignee ? "AUTO" : undefined,
@@ -531,7 +542,11 @@ export async function ingestMetaLead(
   if (!shouldHold) {
     const recipients = await User.find({
       isActive: true,
-      $or: [{ role: { $in: ["ADMIN", "MANAGER"] } }, ...(assignee ? [{ _id: assignee._id }] : [])],
+      $or: [
+        { role: { $in: ["ADMIN", "MANAGER"] } },
+        ...(assignee ? [{ _id: assignee._id }] : []),
+        ...(businessId ? [{ role: "BUSINESS", business: businessId }] : []),
+      ],
     }).select("_id");
 
     if (recipients.length) {
@@ -547,25 +562,15 @@ export async function ingestMetaLead(
       );
     }
 
-    if (io) {
-      // Only admins receive the global lead stream. Salespeople receive
-      // realtime events only through their own user room.
-      console.log(
-        `[realtime] emitting new_lead to admin/user scope ${lead.id}`,
-      );
-      io.to("role:ADMIN").emit("new_lead", { lead: lead.toObject() });
-    }
-
-    if (io && assignee?._id) {
-      const assigneeId = String(assignee._id);
-      console.log(`[realtime] emitting new_lead user:${assigneeId}`);
-      io.to(`user:${assigneeId}`).emit("new_lead", { lead: lead.toObject() });
-    } else if (io) {
-      console.log(`[realtime] lead ${lead.id} has no salesperson assignment; only admin/manager notification sent`);
+    emitLeadEvent(io, "new_lead", { lead: lead.toObject() }, { assignedTo: assignee?._id, business: businessId });
+    if (!assignee) {
+      logger.warn("[meta] lead released without an available salesperson", { leadId: lead.id, project: project?.name });
     }
   } else {
-    console.log(`[meta] lead ${lead.id} held until the delivery window ends`);
+    logger.info("[meta] lead held", { leadId: lead.id, reason: limitCheck.reached ? limitCheck.reason : "delivery window" });
   }
+
+  void refreshLeadScore(lead.id);
 
   return {
     lead,

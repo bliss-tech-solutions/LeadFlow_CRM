@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Notification } from "../models/Notification";
 import { auth } from "../middleware/auth";
+import { registerPushToken, unregisterPushToken, sendPushNotification } from "../services/push.service";
 
 const r = Router();
 
@@ -81,6 +82,55 @@ r.delete("/:id", auth, async (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+/**
+ * POST /api/notifications/push-token
+ * Register or update an Expo Push Token for mobile alerts.
+ */
+r.post("/push-token", auth, async (req, res) => {
+  const { token, platform, app, deviceName } = req.body || {};
+  if (!token) {
+    return res.status(400).json({ message: "Push token is required" });
+  }
+
+  await registerPushToken({
+    userId: req.user!.id,
+    token,
+    platform: platform === "ios" || platform === "android" ? platform : "android",
+    app: app === "ADMIN" || app === "SALES" ? app : "ALL",
+    deviceName,
+  });
+
+  res.json({ success: true, message: "Push token registered successfully" });
+});
+
+/**
+ * DELETE /api/notifications/push-token
+ * Unregister push token when user logs out.
+ */
+r.delete("/push-token", auth, async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) {
+    return res.status(400).json({ message: "Token is required" });
+  }
+
+  await unregisterPushToken(req.user!.id, token);
+  res.json({ success: true });
+});
+
+/**
+ * POST /api/notifications/test-push
+ * Trigger an instant test push notification to the current user's devices.
+ */
+r.post("/test-push", auth, async (req, res) => {
+  await sendPushNotification(req.user!.id, {
+    title: "LeadFlow CRM Alert",
+    body: `Hello ${req.user!.name || "there"}, push notifications are active for your device!`,
+    data: { test: true, timestamp: Date.now() },
+  });
+
+  res.json({ success: true, message: "Test notification dispatched" });
 });
 
 export default r;

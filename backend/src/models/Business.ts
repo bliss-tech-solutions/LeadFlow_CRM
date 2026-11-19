@@ -8,6 +8,18 @@ export interface IBusiness extends Document {
   leadLimitType: "DAILY" | "MONTHLY" | "NONE";
   isActive: boolean;
   createdBy?: Types.ObjectId;
+  settings: {
+    /** Reassign a NEW lead that nobody contacted within N hours (0 = off). */
+    autoReassignHours: number;
+    /** Minutes before an uncontacted NEW lead raises an SLA alert. */
+    slaMinutes: number;
+    /** Allow sales staff to send WhatsApp messages through the business number. */
+    salesCanSendWhatsApp: boolean;
+    /** Daily email digest to the business owner. */
+    dailyDigest: boolean;
+    /** Lead assignment strategy. */
+    assignmentStrategy: "LEAST_LOADED" | "ROUND_ROBIN";
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +58,13 @@ const schema = new Schema<IBusiness>(
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: "User",
+    },
+    settings: {
+      autoReassignHours: { type: Number, default: 0, min: 0, max: 168 },
+      slaMinutes: { type: Number, default: 15, min: 1, max: 1440 },
+      salesCanSendWhatsApp: { type: Boolean, default: true },
+      dailyDigest: { type: Boolean, default: false },
+      assignmentStrategy: { type: String, enum: ["LEAST_LOADED", "ROUND_ROBIN"], default: "LEAST_LOADED" },
     },
   },
   { timestamps: true },

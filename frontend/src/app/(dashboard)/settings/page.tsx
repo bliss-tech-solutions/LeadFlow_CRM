@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import SecurityCard from "../../../components/SecurityCard";
 import Topbar from "../../../components/Topbar";
 import { api } from "../../../lib/api";
 import { getUser, saveSession } from "../../../lib/auth";
@@ -282,6 +283,8 @@ export default function SettingsPage() {
           </button>
         </div>
       </section>
+
+      <SecurityCard />
     </div>
   );
 }

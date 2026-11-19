@@ -2,6 +2,7 @@ import { FollowUp } from "../models/FollowUp";
 import { Notification } from "../models/Notification";
 import { User } from "../models/User";
 import { logActivity } from "../utils/activity";
+import { sendPushNotification } from "./push.service";
 
 /**
  * Send a follow-up reminder once the appointment's exact 24-hour reminder time
@@ -87,6 +88,14 @@ async function sendReminder(io: any, followup: any) {
       entityId: leadId,
     })),
   );
+
+  // Send Push Notifications to assigned user and admins
+  void sendPushNotification(recipients.map(r => r._id), {
+    title: `Follow-up: ${leadName}`,
+    body: `${followup.type} scheduled for ${scheduled}`,
+    data: { leadId, followupId: String(followup._id), type: "FOLLOWUP_REMINDER" },
+    channelId: "followups",
+  }).catch(() => undefined);
 
   await logActivity({
     lead: leadId,

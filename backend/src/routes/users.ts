@@ -1,14 +1,15 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { User } from "../models/User";
 import { BusinessProject } from "../models/BusinessProject";
 import { Business } from "../models/Business";
-import { auth, roles } from "../middleware/auth";
+import { auth, roles, signUserToken, isAdminRole } from "../middleware/auth";
+import { containsRegex } from "../utils/regex";
+import { invalidateUser } from "../utils/userCache";
+import { disconnectUserSockets } from "../sockets";
 import { Notification } from "../models/Notification";
 import { logAudit } from "../utils/activity";
 import { Lead } from "../models/Lead";
-import { env } from "../config/env";
 import crypto from "crypto";
 import { createDocumentUploadUrl, createPublicObjectUrl, deleteDocumentObject } from "../services/s3.service";
 
@@ -93,10 +94,7 @@ r.get("/", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
   if (req.query.search) {
     const searchStr = String(req.query.search).trim();
     if (searchStr) {
-      const searchOr = [
-        { name: { $regex: searchStr, $options: "i" } },
-        { email: { $regex: searchStr, $options: "i" } },
-      ];
+      const searchOr = [{ name: containsRegex(searchStr) }, { email: containsRegex(searchStr) }];
       if (filter.$or) {
         filter.$and = [{ $or: filter.$or }, { $or: searchOr }];
         delete filter.$or;
@@ -121,8 +119,8 @@ r.get("/", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
 
   const total = await User.countDocuments(filter);
   const users = await User.find(filter)
-    .select("-passwordHash")
-    .populate("business", "name contactNo leadLimit leadLimitType")
+    .select("-passwordHash -tokenVersion")
+    .populate("business", isAdminRole(req.user?.role) ? "name contactNo leadLimit leadLimitType" : "name contactNo")
     .populate("businessProject", "name stage reraNumber developerGroup")
     .populate("assignedProjects", "name stage location reraNumber")
     .sort({ createdAt: -1, name: 1 })
@@ -309,8 +307,20 @@ r.post("/", auth, roles("ADMIN", "BUSINESS"), async (req, res) => {
         });
       }
     } else {
-      if (business) finalBusinessId = String(business);
+      if (business) {
+        const biz = await Business.findById(business).select("_id").lean();
+        if (!biz) return res.status(400).json({ message: "Invalid business selected" });
+        finalBusinessId = String(biz._id);
+      }
       if (Array.isArray(assignedProjects) && assignedProjects.length > 0) {
+        const projects = await BusinessProject.find({ _id: { $in: assignedProjects.map(String) } }).select("business").lean();
+        if (projects.length !== assignedProjects.length) {
+          return res.status(400).json({ message: "One or more assigned projects do not exist" });
+        }
+        const projectBusinesses = new Set(projects.map((pr) => String(pr.business)));
+        if (projectBusinesses.size > 1 || (finalBusinessId && !projectBusinesses.has(finalBusinessId))) {
+          return res.status(400).json({ message: "All assigned projects must belong to the salesperson's business" });
+        }
         finalAssignedProjects = assignedProjects.map(String);
         // Automatically sync business from the assigned project if not explicitly set
         if (!finalBusinessId) {
@@ -345,8 +355,8 @@ r.post("/", auth, roles("ADMIN", "BUSINESS"), async (req, res) => {
   });
 
   const populatedUser = await User.findById(user._id)
-    .select("-passwordHash")
-    .populate("business", "name contactNo leadLimit leadLimitType")
+    .select("-passwordHash -tokenVersion")
+    .populate("business", isAdminRole(req.user?.role) ? "name contactNo leadLimit leadLimitType" : "name contactNo")
     .populate("businessProject", "name stage reraNumber developerGroup")
     .populate("assignedProjects", "name stage location reraNumber")
     .lean();
@@ -415,7 +425,7 @@ r.patch("/:id/capacity", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
  * PATCH /api/users/:id/status
  * Admin blocks or unblocks a user account (restricts receiving leads & login).
  */
-r.patch("/:id/status", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
+r.patch("/:id/status", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
   const { isActive } = req.body ?? {};
 
   if (typeof isActive !== "boolean") {
@@ -427,14 +437,25 @@ r.patch("/:id/status", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     return res.status(400).json({ message: "You cannot block your own account" });
   }
 
-  const before = await User.findById(req.params.id).select("name email isActive role");
+  const before = await User.findById(req.params.id).select("name email isActive role business");
   if (!before) return res.status(404).json({ message: "User not found" });
+
+  if (req.user?.role === "BUSINESS") {
+    if (before.role !== "SALES" || !req.user.business || String(before.business) !== String(req.user.business)) {
+      return res.status(403).json({ message: "You can only block or unblock your own sales staff" });
+    }
+  }
+  if (req.user?.role === "MANAGER" && before.role === "ADMIN") {
+    return res.status(403).json({ message: "Managers cannot block administrators" });
+  }
 
   const user = await User.findByIdAndUpdate(
     req.params.id,
-    { $set: { isActive } },
+    { $set: { isActive }, ...(isActive ? {} : { $inc: { tokenVersion: 1 } }) },
     { new: true },
-  ).select("-passwordHash");
+  ).select("-passwordHash -tokenVersion");
+
+  invalidateUser(String(req.params.id));
 
   await logAudit({
     actor: req.user!.id,
@@ -456,6 +477,7 @@ r.patch("/:id/status", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
       userId: user!.id,
       isActive: user!.isActive,
     });
+    if (!isActive) disconnectUserSockets(io, user!.id);
   }
 
   res.json({
@@ -525,10 +547,11 @@ r.patch("/:id/assigned-projects", auth, roles("ADMIN", "BUSINESS"), async (req, 
     }
   }
   await targetUser.save();
+  invalidateUser(targetUser.id);
 
   const populated = await User.findById(targetUser._id)
-    .select("-passwordHash")
-    .populate("business", "name contactNo leadLimit leadLimitType")
+    .select("-passwordHash -tokenVersion")
+    .populate("business", isAdminRole(req.user?.role) ? "name contactNo leadLimit leadLimitType" : "name contactNo")
     .populate("businessProject", "name stage reraNumber developerGroup")
     .populate("assignedProjects", "name stage location reraNumber")
     .lean();
@@ -560,19 +583,18 @@ r.patch("/me", auth, async (req, res) => {
     ip: req.ip,
   });
 
-  const token = jwt.sign(
-    {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      business: user.business ? String(user.business) : undefined,
-      assignedProjects: Array.isArray(user.assignedProjects) ? user.assignedProjects.map(String) : [],
-      businessProject: user.businessProject ? String(user.businessProject) : undefined,
-    },
-    env.JWT_SECRET,
-    { expiresIn: env.JWT_EXPIRES_IN as any },
-  );
+  invalidateUser(user.id);
+  const fresh = await User.findById(user.id).select("tokenVersion business assignedProjects businessProject").lean();
+  const token = signUserToken({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    business: fresh?.business,
+    assignedProjects: fresh?.assignedProjects,
+    businessProject: fresh?.businessProject,
+    tokenVersion: fresh?.tokenVersion,
+  });
 
   res.json({ user, token });
 });
