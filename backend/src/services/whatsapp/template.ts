@@ -28,7 +28,7 @@ function priceSummary(products?: any[]) {
   return products
     .map((p: any) => {
       const label = p.customType || String(p.type || "").replace(/_/g, " ");
-      const parts = [label, p.areaSqFt ? `${p.areaSqFt} sq.ft` : "", p.priceRange ? `₹${p.priceRange}` : ""].filter(Boolean);
+      const parts = [label, p.areaSqFt ? `${p.areaSqFt} sq.ft` : "", p.priceRange ? `${p.priceRange}` : ""].filter(Boolean);
       return `• ${parts.join(" · ")}`;
     })
     .join("\n");

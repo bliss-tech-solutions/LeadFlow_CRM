@@ -7,7 +7,7 @@ import { FollowUp } from "../models/FollowUp";
 import { User } from "../models/User";
 import { BusinessProject } from "../models/BusinessProject";
 import { auth, roles } from "../middleware/auth";
-import { logActivity, logAudit } from "../utils/activity";
+import { logActivity } from "../utils/activity";
 import { Notification } from "../models/Notification";
 import { remapUnmappedLeads } from "../services/leadRemap.service";
 import { Note } from "../models/Note";
@@ -55,10 +55,12 @@ function buildSearch(search: string) {
  * Scope (who can see what) is applied first by visibleLeadFilter and is never widened here.
  */
 function applyListFilters(q: any, query: Record<string, string>, req: any) {
-  const { search, status, source, assignedTo, dateFrom, dateTo, scoreMin, unassigned, tag, followup, uncontacted } = query;
+  const { search, status, source, assignedTo, dateFrom, dateTo, scoreMin, unassigned, tag, followup, uncontacted, city, product } = query;
   if (status && VALID_STATUSES.includes(status)) q.status = status;
   if (source) q.source = String(source).slice(0, 40);
   if (tag) q.tags = String(tag).slice(0, 40);
+  if (city) q.city = String(city).slice(0, 60);
+  if (product) q.interestedProduct = String(product).slice(0, 60);
 
   const canFilterBySales = ["ADMIN", "MANAGER", "BUSINESS"].includes(req.user?.role);
   if (canFilterBySales && assignedTo && Types.ObjectId.isValid(assignedTo)) q.assignedTo = assignedTo;
@@ -139,21 +141,45 @@ r.get("/stats", auth, async (req, res) => {
 });
 
 /**
+ * GET /api/leads/product-options
+ * Distinct product types present on the leads the caller can see — used to
+ * populate the product filter dropdown (web + mobile).
+ */
+r.get("/product-options", auth, async (req, res) => {
+  const match = await visibleLeadFilter(req);
+  const values = await Lead.distinct("interestedProduct", { ...match, interestedProduct: { $nin: [null, ""] } });
+  const products = (values as string[]).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  res.json({ products });
+});
+
+/**
  * GET /api/leads
  * List only the leads the authenticated user is allowed to see.
  */
 r.get("/", auth, async (req, res) => {
   const { page = "1", limit = "20", sort = "newest" } = req.query as Record<string, string>;
   const sortSpec: Record<string, 1 | -1> =
-    sort === "score" ? { score: -1, createdAt: -1 } : sort === "oldest" ? { createdAt: 1 } : sort === "followup" ? { nextFollowUpAt: 1 } : { createdAt: -1 };
+    sort === "score" ? { score: -1, createdAt: -1 }
+    : sort === "oldest" ? { createdAt: 1 }
+    : sort === "followup" ? { nextFollowUpAt: 1 }
+    : sort === "product" ? { interestedProduct: 1, createdAt: -1 }
+    : sort === "size_desc" || sort === "price_desc" ? { interestedProduct: 1, createdAt: -1 }
+    : { createdAt: -1 };
 
   const q: any = applyListFilters(await visibleLeadFilter(req), req.query as Record<string, string>, req);
 
   const p = Math.max(1, Number(page) || 1);
   const l = Math.min(100, Math.max(1, Number(limit) || 20));
 
+  // The list never needs the raw Meta payload; non-admins don't get Meta ids either.
+  const isAdminViewer = req.user!.role === "ADMIN" || req.user!.role === "MANAGER";
+  const listProjection = isAdminViewer
+    ? "-meta.rawPayload"
+    : "-meta.rawPayload -meta.pageId -meta.pageName -meta.adId -meta.adSetId -meta.campaignId -meta.adAccountId -meta.formId -meta.businessId -metaLeadId";
+
   const [leads, total] = await Promise.all([
     Lead.find(q)
+      .select(listProjection)
       .populate("assignedTo", "name email")
       .populate({
         path: "businessProject",
@@ -453,6 +479,7 @@ r.get("/:id", auth, async (req, res) => {
       .sort({ createdAt: -1, updatedAt: -1 }),
     Note.find({ lead: lead._id })
       .populate("author", "name role profilePhotoUrl")
+      .populate("mentions", "name role")
       .sort({ pinned: -1, createdAt: -1 })
       .limit(200)
       .lean(),
@@ -461,7 +488,65 @@ r.get("/:id", auth, async (req, res) => {
       : Promise.resolve(null),
   ]);
 
-  res.json({ lead, activities, calls, followups, notes, duplicate });
+  const isAdminViewer = req.user!.role === "ADMIN" || req.user!.role === "MANAGER";
+  const leadOut: any = lead.toObject();
+  if (!isAdminViewer) {
+    // Partners and sales see the form answers, never Meta's internal ids or raw payload.
+    leadOut.meta = { fieldData: leadOut.meta?.fieldData || [], formData: leadOut.meta?.formData || undefined };
+    delete leadOut.metaLeadId;
+  }
+  res.json({ lead: leadOut, activities, calls, followups, notes, duplicate });
+});
+
+/**
+ * GET /api/leads/:id/mentionable-users
+ * Returns strictly the users related to this specific lead:
+ * - The assigned salesperson (if any)
+ * - The business owner/partner for the lead's business
+ * - The sales team members assigned to the lead's business or project
+ */
+r.get("/:id/mentionable-users", auth, async (req, res) => {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
+    return res.status(403).json({ message: "You do not have access to this lead" });
+  }
+
+  const lead = await Lead.findById(req.params.id).select("assignedTo business businessProject").lean();
+  if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+  let businessId = lead.business ? String(lead.business) : undefined;
+  if (!businessId && lead.businessProject) {
+    const p = await BusinessProject.findById(lead.businessProject).select("business").lean();
+    if (p?.business) businessId = String(p.business);
+  }
+
+  const orConditions: any[] = [];
+  if (lead.assignedTo) {
+    orConditions.push({ _id: lead.assignedTo });
+  }
+
+  if (businessId) {
+    orConditions.push({ business: businessId });
+  }
+
+  if (lead.businessProject) {
+    orConditions.push({ businessProject: lead.businessProject });
+    orConditions.push({ assignedProjects: lead.businessProject });
+  }
+
+  if (!orConditions.length) {
+    return res.json({ users: [] });
+  }
+
+  const users = await User.find({
+    $or: orConditions,
+    isActive: true,
+    role: { $in: ["BUSINESS", "SALES"] },
+  })
+    .select("_id name email role business businessProject assignedProjects")
+    .sort({ role: 1, name: 1 })
+    .lean();
+
+  res.json({ users });
 });
 
 /**
@@ -502,6 +587,17 @@ r.patch("/:id/status", auth, async (req, res) => {
   lead.status = req.body.status;
   lead.contactStatus = req.body.contactStatus ?? lead.contactStatus;
   if (lostReason && (lead.status === "LOST" || lead.status === "NOT_INTERESTED")) lead.lostReason = lostReason;
+  if (req.body?.isFake !== undefined) {
+    lead.isFake = Boolean(req.body.isFake);
+    if (lead.isFake) {
+      lead.status = "LOST";
+      lead.lostReason = lostReason || "Fake lead";
+      await FollowUp.updateMany(
+        { lead: lead._id, status: "PENDING" },
+        { status: "CANCELLED", outcome: "Lead marked as fake" }
+      );
+    }
+  }
   if (dealValue !== undefined && lead.status === "WON") lead.dealValue = dealValue;
   if (lead.status !== "NEW" && !lead.firstContactAt) lead.firstContactAt = new Date();
   await lead.save();
@@ -517,20 +613,51 @@ r.patch("/:id/status", auth, async (req, res) => {
 
   emitLeadEvent(req.app.get("io"), "lead_updated", { lead: lead.toObject(), reason: "STATUS" }, await leadScope(lead._id));
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "STATUS_CHANGED",
-    entity: "Lead",
-    entityId: lead.id,
-    before,
-    after: {
-      status: lead.status,
-      contactStatus: lead.contactStatus,
-    },
-    ip: req.ip,
-  });
 
   res.json({ lead });
+});
+
+/**
+ * POST /api/leads/:id/mark-fake
+ * Mark or unmark a lead as fake. Closes all pending follow-ups when marked fake.
+ */
+r.post("/:id/mark-fake", auth, async (req, res) => {
+  if (!(await canAccessLead(req, String(req.params.id)))) {
+    return res.status(403).json({ message: "You do not have access to this lead" });
+  }
+
+  const lead = await Lead.findById(req.params.id);
+  if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+  const targetFake = req.body?.isFake !== undefined ? Boolean(req.body.isFake) : !Boolean(lead.isFake);
+  lead.isFake = targetFake;
+
+  if (targetFake) {
+    lead.status = "LOST";
+    lead.lostReason = req.body?.reason ? String(req.body.reason).trim() : "Fake lead";
+    // Close/cancel all pending follow-ups for this lead
+    await FollowUp.updateMany(
+      { lead: lead._id, status: "PENDING" },
+      { status: "CANCELLED", outcome: "Lead marked as fake lead" }
+    );
+  }
+  await lead.save();
+
+  await logActivity({
+    lead: lead.id,
+    actor: req.user!.id,
+    type: "STATUS_CHANGED",
+    title: targetFake ? "Marked as Fake Lead" : "Unmarked as Fake Lead",
+    description: targetFake
+      ? `Lead flagged as fake (${lead.lostReason}). All pending follow-ups cancelled.`
+      : "Lead restored from fake status.",
+  });
+
+  const scope = await leadScope(lead._id);
+  emitLeadEvent(req.app.get("io"), "lead_updated", { lead: lead.toObject(), reason: "FAKE" }, scope);
+  emitLeadEvent(req.app.get("io"), "followup_updated", { leadId: lead._id }, scope);
+
+  res.json({ lead, success: true });
 });
 
 /**
@@ -583,15 +710,6 @@ r.patch("/:id/assign", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, 
     description: `Assigned to ${user.name}.`,
   });
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "LEAD_REASSIGNED",
-    entity: "Lead",
-    entityId: lead.id,
-    before: { assignedTo: before },
-    after: { assignedTo: user._id, assignmentSource: "MANUAL" },
-    ip: req.ip,
-  });
 
   const io = req.app.get("io");
 
@@ -633,7 +751,7 @@ r.post("/:id/calls", auth, async (req, res) => {
     lead: req.params.id,
     user: req.user!.id,
     result: req.body.result,
-    durationSec: req.body.durationSec,
+    durationSec: Number.isFinite(Number(req.body.durationSec)) ? Math.max(0, Math.min(6 * 3600, Math.round(Number(req.body.durationSec)))) : undefined,
     notes: req.body.notes,
     startedAt: req.body.startedAt ?? new Date(),
     endedAt: req.body.endedAt ?? new Date(),
@@ -894,9 +1012,10 @@ async function createLeadFromInput(
 
 /**
  * POST /api/leads
- * Create a lead manually (walk-in, referral, phone enquiry).
+ * Create a lead manually. Kept for admin tooling only — leads normally arrive
+ * from Meta / LeadSync, and the manual "add lead" UI was removed.
  */
-r.post("/", auth, validateBody(leadInputSchema), async (req, res) => {
+r.post("/", auth, roles("ADMIN", "MANAGER"), validateBody(leadInputSchema), async (req, res) => {
   if (!req.body.phone && !req.body.email) {
     return res.status(400).json({ message: "Add at least a phone number or an email" });
   }
@@ -964,14 +1083,6 @@ r.post("/import", auth, roles("ADMIN", "MANAGER", "BUSINESS"), validateBody(impo
     }
   }
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "LEADS_IMPORTED",
-    entity: "Lead",
-    entityId: req.user!.id,
-    after: { created: result.created, duplicates: result.duplicates, failed: result.failed },
-    ip: req.ip,
-  });
   res.json(result);
 });
 
@@ -982,6 +1093,7 @@ const leadEditSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(40)).max(15).optional(),
   dealValue: z.number().min(0).nullable().optional(),
   whatsappOptOut: z.boolean().optional(),
+  interestedProduct: z.string().trim().max(60).nullable().optional(),
 });
 
 /**
@@ -996,24 +1108,16 @@ r.patch("/:id", auth, validateBody(leadEditSchema), async (req, res) => {
   const lead = await Lead.findById(req.params.id);
   if (!lead) return res.status(404).json({ message: "Lead not found" });
 
-  const before = {
-    name: lead.name,
-    phone: lead.phone,
-    email: lead.email,
-    tags: lead.tags,
-    dealValue: lead.dealValue,
-    whatsappOptOut: lead.whatsappOptOut,
-  };
   if (body.name !== undefined) lead.name = body.name;
   if (body.phone !== undefined) lead.phone = body.phone ? normalizePhone(body.phone) || body.phone : undefined;
   if (body.email !== undefined) lead.email = body.email || undefined;
   if (body.tags !== undefined) lead.tags = Array.from(new Set(body.tags));
   if (body.dealValue !== undefined) lead.dealValue = body.dealValue ?? undefined;
   if (body.whatsappOptOut !== undefined) lead.whatsappOptOut = body.whatsappOptOut;
+  if (body.interestedProduct !== undefined) lead.interestedProduct = body.interestedProduct ?? undefined;
   await lead.save();
 
   await logActivity({ lead: lead.id, actor: req.user!.id, type: "LEAD_UPDATED", title: "Lead details updated" });
-  await logAudit({ actor: req.user!.id, action: "LEAD_UPDATED", entity: "Lead", entityId: lead.id, before, after: body, ip: req.ip });
   emitLeadEvent(req.app.get("io"), "lead_updated", { lead: lead.toObject(), reason: "EDITED" }, await leadScope(lead._id));
   res.json({ lead });
 });
@@ -1096,14 +1200,6 @@ r.post("/bulk", auth, validateBody(bulkSchema), async (req, res) => {
     updated = result.modifiedCount;
   }
 
-  await logAudit({
-    actor: req.user!.id,
-    action: `LEADS_BULK_${body.action.toUpperCase()}`,
-    entity: "Lead",
-    entityId: req.user!.id,
-    after: { count: updated, status: body.status, userId: body.userId, tag: body.tag },
-    ip: req.ip,
-  });
   io?.to("role:ADMIN").emit("lead_updated", { reason: "BULK", count: updated });
   res.json({ updated, skipped: leads.length - updated });
 });
@@ -1136,7 +1232,7 @@ r.post("/:id/notes", auth, validateBody(noteSchema), async (req, res) => {
         u.role === "ADMIN" ||
         u.role === "MANAGER" ||
         String(u._id) === String(lead.assignedTo) ||
-        (u.role === "BUSINESS" && scope.business && String(u.business) === String(scope.business)),
+        (scope.business && String(u.business) === String(scope.business)),
     )
     .map((u: any) => u._id);
 
@@ -1165,7 +1261,10 @@ r.post("/:id/notes", auth, validateBody(noteSchema), async (req, res) => {
     for (const id of recipients) io?.to(`user:${String(id)}`).emit("notification", { type: "MENTION", leadId: lead.id });
   }
 
-  const populated = await Note.findById(note._id).populate("author", "name role profilePhotoUrl").lean();
+  const populated = await Note.findById(note._id)
+    .populate("author", "name role profilePhotoUrl")
+    .populate("mentions", "name role")
+    .lean();
   res.status(201).json({ note: populated });
 });
 

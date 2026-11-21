@@ -65,7 +65,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {impersonating && (
             <div className="mx-auto mb-4 flex w-full max-w-[1800px] flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">
               <span className="inline-flex items-center gap-2">
-                <ShieldAlert size={15} /> You are viewing the CRM as <b>{impersonating}</b>. Actions are recorded in the audit log.
+                <ShieldAlert size={15} /> You are viewing the CRM as <b>{impersonating}</b>.
               </span>
               <button onClick={stopImpersonating} className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 font-semibold text-white hover:bg-amber-700">
                 <Undo2 size={13} /> Return to admin

@@ -223,14 +223,7 @@ export default function WhatsAppSendDrawer({ leadId, onClose, onSent }: Props) {
 
               {/* Template */}
               <div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-700">Template</span>
-                  {user?.role === "BUSINESS" && (
-                    <Link href="/whatsapp#templates" className="text-[11px] font-semibold text-indigo-600 hover:underline">
-                      Manage templates
-                    </Link>
-                  )}
-                </div>
+                <span className="text-xs font-semibold text-slate-700">Template</span>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {data.templates.map((t) => (
                     <button
@@ -247,18 +240,16 @@ export default function WhatsAppSendDrawer({ leadId, onClose, onSent }: Props) {
                 </div>
               </div>
 
-              {/* Message */}
-              <label className="block">
-                <span className="text-xs font-semibold text-slate-700">Message</span>
-                <textarea
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  rows={9}
-                  maxLength={4000}
-                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-[#f0fdf4] p-3 font-[system-ui] text-sm leading-relaxed text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                />
-                <span className="mt-1 block text-right text-[10px] text-slate-400">{body.length}/4000 · *bold* _italic_ supported</span>
-              </label>
+              {/* Message — rendered from the chosen template, not editable */}
+              <div className="block">
+                <span className="text-xs font-semibold text-slate-700">Message preview</span>
+                <div className="mt-1.5 min-h-[180px] whitespace-pre-wrap rounded-xl border border-slate-200 bg-[#f0fdf4] p-3 font-[system-ui] text-sm leading-relaxed text-slate-800">
+                  {body}
+                </div>
+                <span className="mt-1 block text-[10px] text-slate-400">
+                  Templates are written and approved by your LeadFlow admin — pick one above.
+                </span>
+              </div>
 
               {/* Documents */}
               <div>

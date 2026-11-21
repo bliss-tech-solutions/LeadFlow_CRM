@@ -7,6 +7,5 @@ coverage
 *.log
 .DS_Store
 
-graphify-out
-
-mobile
+# Graphify knowledge-graph output (local only)
+graphify-out/

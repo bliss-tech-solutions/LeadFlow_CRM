@@ -9,6 +9,7 @@ import { socket } from "../../../lib/socket";
 import { getUser, isAuthError, type User } from "../../../lib/auth";
 import {
   ArrowUpRight,
+  Building2,
   CalendarCheck,
   CheckCircle2,
   Clock3,
@@ -17,6 +18,15 @@ import {
   Save,
   Users,
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from "recharts";
 import FollowupCalendar from "../../../components/FollowupCalendar";
 
 const statuses = [
@@ -65,6 +75,14 @@ export default function Dashboard() {
   }, [router]);
 
   const [stats, setStats] = useState<any>({});
+  const [overview, setOverview] = useState<any>(null);
+  const [selectedCity, setSelectedCity] = useState<string>("");
+  const [perfRange, setPerfRange] = useState("3m");
+  const [perfData, setPerfData] = useState<any>(null);
+  const [perfBusiness, setPerfBusiness] = useState("");
+  const [perfProject, setPerfProject] = useState("");
+  const [perfBusinesses, setPerfBusinesses] = useState<any[]>([]);
+  const [perfProjects, setPerfProjects] = useState<any[]>([]);
   const [followupStats, setFollowupStats] = useState<any>({});
   const [schedule, setSchedule] = useState<any>(null);
   const [leads, setLeads] = useState<any[]>([]);
@@ -86,15 +104,17 @@ export default function Dashboard() {
       ];
 
       if (admin) {
-        const [s, l, f, d] = await Promise.all([
+        const [s, l, f, d, ov] = await Promise.all([
           ...baseRequests,
           api("/lead-delivery/schedule"),
+          api("/admin/overview"),
         ]);
 
         setStats(s || {});
         setLeads(l?.leads || []);
         setFollowupStats(f || {});
         setSchedule(d || null);
+        setOverview(ov || null);
         setForm({
           enabled: Boolean(d?.schedule?.enabled),
           holdFrom: toLocalInput(d?.schedule?.holdFrom),
@@ -141,6 +161,27 @@ export default function Dashboard() {
       socket.off("call_logged", refresh);
     };
   }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const qs = new URLSearchParams({ range: perfRange });
+    if (selectedCity) qs.set("city", selectedCity);
+    if (perfBusiness) qs.set("business", perfBusiness);
+    if (perfProject) qs.set("project", perfProject);
+    api(`/analytics/performance?${qs}`).then((d) => setPerfData(d)).catch(() => {});
+  }, [isAdmin, perfRange, selectedCity, perfBusiness, perfProject]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api("/businesses?limit=200").then((d) => setPerfBusinesses(d?.businesses || [])).catch(() => {});
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || !perfBusiness) { setPerfProjects([]); return; }
+    api(`/business-projects?business=${perfBusiness}&limit=100`)
+      .then((d) => setPerfProjects(d?.projects || []))
+      .catch(() => setPerfProjects([]));
+  }, [isAdmin, perfBusiness]);
 
   if (user?.role === "BUSINESS") {
     return (
@@ -224,6 +265,26 @@ export default function Dashboard() {
         }
       />
 
+      {/* Admin client KPIs */}
+      {isAdmin && overview?.summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 w-full">
+          {[
+            ["Total clients", overview.summary.totalClients ?? 0, Building2, "indigo"],
+            ["Active clients", overview.summary.activeClients ?? 0, CheckCircle2, "green"],
+            ["Leads this month", overview.summary.leadsThisMonth ?? 0, ArrowUpRight, "sky"],
+            ["Leads today", overview.summary.leadsToday ?? 0, Radio, "amber"],
+          ].map(([label, value, Icon, tone]: any) => (
+            <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className={`flex items-center justify-between text-xs ${tone === "indigo" ? "text-indigo-600" : tone === "green" ? "text-green-600" : tone === "sky" ? "text-sky-600" : "text-amber-600"}`}>
+                <span className="font-medium">{label}</span>
+                <Icon size={17} />
+              </div>
+              <strong className="mt-2 block text-3xl font-bold text-slate-900">{value}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 lg:gap-5 w-full">
         {[
           [isAdmin ? "Released leads" : "My leads", total, Users],
@@ -250,10 +311,142 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* Admin city overview */}
+      {isAdmin && overview && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">City overview</h2>
+              <p className="text-xs text-slate-500">
+                Clients: <strong>{overview.summary?.totalClients}</strong> total,{" "}
+                <strong>{overview.summary?.activeClients}</strong> active
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setSelectedCity("")}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${!selectedCity ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              >
+                All
+              </button>
+              {(overview.cities as string[]).map((c: string) => {
+                const d = overview.byCity?.find((x: any) => x.city === c);
+                if (!d) return null;
+                return (
+                  <button
+                    key={c}
+                    onClick={() => setSelectedCity(c === selectedCity ? "" : c)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${selectedCity === c ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                  >
+                    {c} <span className="opacity-70">({d.leads})</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {((selectedCity
+              ? overview.byCity?.filter((x: any) => x.city === selectedCity)
+              : overview.byCity) ?? []).map((item: any) => (
+              <div key={item.city} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <div className="font-medium text-sm text-slate-800">{item.city}</div>
+                <div className="mt-1 flex gap-3 text-xs text-slate-500">
+                  <span><strong className="text-slate-800">{item.leads}</strong> leads</span>
+                  <span><strong className="text-green-700">{item.won}</strong> won</span>
+                </div>
+                {item.clients > 0 && (
+                  <div className="mt-0.5 text-xs text-slate-400">{item.clients} client{item.clients !== 1 ? "s" : ""}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Admin monthly performance graph */}
+      {isAdmin && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">Lead performance</h2>
+              <p className="text-xs text-slate-500">
+                {selectedCity ? `${selectedCity} · ` : ""}New leads vs. won over time
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={perfBusiness}
+                onChange={(e) => { setPerfBusiness(e.target.value); setPerfProject(""); }}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
+                aria-label="Business"
+              >
+                <option value="">All businesses</option>
+                {perfBusinesses.map((b: any) => <option key={b._id} value={b._id}>{b.name}</option>)}
+              </select>
+              {perfBusiness && (
+                <select
+                  value={perfProject}
+                  onChange={(e) => setPerfProject(e.target.value)}
+                  className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
+                  aria-label="Project"
+                >
+                  <option value="">All projects</option>
+                  {perfProjects.map((p: any) => <option key={p._id} value={p._id}>{p.name}</option>)}
+                </select>
+              )}
+            </div>
+            <div className="inline-flex rounded-xl bg-slate-100 p-1">
+              {[
+                { key: "1m", label: "1M" },
+                { key: "3m", label: "3M" },
+                { key: "6m", label: "6M" },
+                { key: "1y", label: "1Y" },
+                { key: "2y", label: "2Y" },
+              ].map((r) => (
+                <button
+                  key={r.key}
+                  onClick={() => setPerfRange(r.key)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${perfRange === r.key ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {perfData?.data?.length ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={perfData.data} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gLeads" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#2a78d6" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="#2a78d6" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="gWon" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#1baf7a" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="#1baf7a" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="period" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12, boxShadow: "0 8px 24px rgba(15,23,42,.08)" }}
+                  labelStyle={{ color: "#0f172a", fontWeight: 600 }}
+                />
+                <Area type="monotone" dataKey="leads" stroke="#2a78d6" strokeWidth={2} fill="url(#gLeads)" name="Leads" />
+                <Area type="monotone" dataKey="won" stroke="#1baf7a" strokeWidth={2} fill="url(#gWon)" name="Won" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-56 items-center justify-center text-sm text-slate-400">No data for this range yet.</div>
+          )}
+        </section>
+      )}
+
       {/* Calendar section  */}
       <FollowupCalendar />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,.8fr)]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,.8fr)] items-start">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>

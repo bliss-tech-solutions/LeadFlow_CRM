@@ -21,6 +21,7 @@ export interface IFollowUp extends Document {
   rescheduledFrom?: Types.ObjectId;
   reminderAt?: Date;
   reminder24hSentAt?: Date;
+  reminder15mSentAt?: Date;
   outcomeNote?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -56,12 +57,14 @@ const schema = new Schema<IFollowUp>(
     rescheduledFrom: { type: Schema.Types.ObjectId, ref: "FollowUp" },
     reminderAt: { type: Date, index: true },
     reminder24hSentAt: Date,
+    reminder15mSentAt: Date,
     outcomeNote: String,
   },
   { timestamps: true },
 );
 
 schema.index({ status: 1, reminderAt: 1, reminder24hSentAt: 1 });
+schema.index({ status: 1, scheduledAt: 1, reminder15mSentAt: 1 });
 schema.index({ status: 1, scheduledAt: 1 });
 schema.index({ user: 1, status: 1, scheduledAt: 1 });
 schema.index({ updatedAt: -1 });

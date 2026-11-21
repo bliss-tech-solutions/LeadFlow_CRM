@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { Types } from "mongoose";
-import { auth } from "../middleware/auth";
+import { auth, roles } from "../middleware/auth";
 import { Lead } from "../models/Lead";
 import { Call } from "../models/Call";
 import { FollowUp } from "../models/FollowUp";
@@ -208,6 +208,49 @@ r.get("/team", auth, async (req, res) => {
     .sort((a, b) => b.won - a.won || b.conversionRate - a.conversionRate || b.calls - a.calls);
 
   res.json({ range: { from, to }, team });
+});
+
+/**
+ * GET /api/analytics/performance?range=1m|3m|6m|1y|2y&city=&business=&project=
+ * Monthly/weekly/daily time-series for the admin performance graph.
+ * ADMIN/MANAGER only.
+ */
+r.get("/performance", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
+  const q = req.query as Record<string, string>;
+  const rangeMap: Record<string, number> = { "1m": 30, "3m": 90, "6m": 180, "1y": 365, "2y": 730 };
+  const days = rangeMap[q.range] || 30;
+  const to = new Date();
+  to.setHours(23, 59, 59, 999);
+  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+  from.setHours(0, 0, 0, 0);
+
+  // Group granularity: day for ≤30d, week for ≤90d, month otherwise
+  const fmt = days <= 30 ? "%Y-%m-%d" : days <= 90 ? "%Y-W%V" : "%Y-%m";
+
+  const extraMatch: Record<string, unknown> = { createdAt: { $gte: from, $lte: to } };
+  if (q.city) extraMatch.city = q.city;
+  if (q.business && Types.ObjectId.isValid(q.business)) extraMatch.business = new Types.ObjectId(q.business);
+  if (q.project && Types.ObjectId.isValid(q.project)) extraMatch.businessProject = new Types.ObjectId(q.project);
+
+  const data = await Lead.aggregate([
+    { $match: extraMatch },
+    {
+      $group: {
+        _id: { $dateToString: { date: "$createdAt", format: fmt, timezone: TZ } },
+        leads: { $sum: 1 },
+        won: { $sum: { $cond: [{ $eq: ["$status", "WON"] }, 1, 0] } },
+      },
+    },
+    { $sort: { _id: 1 } },
+  ]);
+
+  res.json({
+    range: q.range || "1m",
+    granularity: days <= 30 ? "day" : days <= 90 ? "week" : "month",
+    from,
+    to,
+    data: data.map((d) => ({ period: d._id, leads: d.leads, won: d.won })),
+  });
 });
 
 export default r;

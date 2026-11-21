@@ -19,7 +19,7 @@ import {
   Sun,
   Webhook,
   Activity,
-  ScrollText,
+  IndianRupee,
   type LucideIcon,
 } from "lucide-react";
 import { getUser, logout } from "../lib/auth";
@@ -41,7 +41,7 @@ const ICONS: Record<string, LucideIcon | typeof WhatsAppIcon> = {
   sun: Sun,
   webhook: Webhook,
   activity: Activity,
-  audit: ScrollText,
+  rupee: IndianRupee,
   whatsapp: WhatsAppIcon,
 };
 

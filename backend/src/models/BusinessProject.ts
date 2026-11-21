@@ -1,4 +1,5 @@
 import { Schema, model, Document, Types } from "mongoose";
+import type { City } from "../config/cities";
 
 export type ProjectStage = "ONGOING" | "UPCOMING" | "COMPLETED";
 
@@ -48,6 +49,10 @@ export interface IProjectDocument {
 export interface IBusinessProject extends Document {
   business?: Types.ObjectId;
   name: string;
+  state?: string;
+  city?: City;
+  area?: string;
+  pincode?: string;
   stage: ProjectStage;
   location?: string;
   developerGroup?: string;
@@ -123,6 +128,10 @@ const schema = new Schema<IBusinessProject>(
       index: true,
     },
     name: { type: String, required: true, trim: true, index: true },
+    state: { type: String, default: "Gujarat", index: true },
+    city: { type: String, index: true },
+    area: { type: String, default: "", index: true },
+    pincode: { type: String, default: "" },
     stage: {
       type: String,
       enum: ["ONGOING", "UPCOMING", "COMPLETED"],

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import BusinessWhatsAppAdmin from "../../../../components/BusinessWhatsAppAdmin";
 import Topbar from "../../../../components/Topbar";
 import { api } from "../../../../lib/api";
 import { getUser, isAuthError } from "../../../../lib/auth";
@@ -25,6 +26,7 @@ import {
   Trash2,
   Database,
 } from "lucide-react";
+import LocationPicker from "../../../../components/LocationPicker";
 
 // Categorized Realistic Price Ranges (Preset brackets - No manual typing)
 const PRODUCT_PRICE_RANGES: Record<string, string[]> = {
@@ -125,6 +127,8 @@ export default function BusinessDetailPage() {
   const isAdmin =
     currentUser?.role === "ADMIN" || currentUser?.role === "MANAGER";
   const canManage = isAdmin || currentUser?.role === "BUSINESS";
+  // Project documents & details are maintained by admins only; partners view them.
+  const canManageDocs = isAdmin;
 
   const [business, setBusiness] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
@@ -145,6 +149,11 @@ export default function BusinessDetailPage() {
   const [projectForm, setProjectForm] = useState({
     name: "",
     stage: "ONGOING" as "ONGOING" | "UPCOMING" | "COMPLETED",
+    state: "Gujarat",
+    city: "Vadodara",
+    area: "",
+    customArea: "",
+    pincode: "",
     location: "",
     hasRera: false,
     reraNumber: "",
@@ -255,6 +264,11 @@ export default function BusinessDetailPage() {
     setProjectForm({
       name: "",
       stage: "ONGOING",
+      state: "Gujarat",
+      city: "Vadodara",
+      area: "",
+      customArea: "",
+      pincode: "",
       location: "",
       hasRera: false,
       reraNumber: "",
@@ -330,8 +344,11 @@ export default function BusinessDetailPage() {
       setAddProjectError("Project name is required.");
       return;
     }
-    if (!projectForm.location.trim()) {
-      setAddProjectError("Project location is required.");
+
+    const effectiveArea = projectForm.area === "Other" ? projectForm.customArea.trim() : projectForm.area.trim();
+    const calculatedLocation = projectForm.location.trim() || [effectiveArea, projectForm.city, projectForm.state, projectForm.pincode].filter(Boolean).join(", ");
+    if (!calculatedLocation) {
+      setAddProjectError("Project location or area is required.");
       return;
     }
 
@@ -380,7 +397,11 @@ export default function BusinessDetailPage() {
           business: businessId,
           name: projectForm.name.trim(),
           stage: projectForm.stage,
-          location: projectForm.location.trim(),
+          state: projectForm.state || "Gujarat",
+          city: projectForm.city || undefined,
+          area: effectiveArea,
+          pincode: projectForm.pincode.trim(),
+          location: calculatedLocation,
           developerGroup: business?.name,
           hasRera: hasReraEffective,
           reraNumber: hasReraEffective
@@ -1188,6 +1209,8 @@ export default function BusinessDetailPage() {
         )}
       </section>
 
+      {isAdmin && businessId && <BusinessWhatsAppAdmin businessId={String(businessId)} />}
+
       {/* MODAL: ADD PROJECT */}
       {openAddProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
@@ -1280,25 +1303,30 @@ export default function BusinessDetailPage() {
                     className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                   />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Location / Area <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={projectForm.location}
-                    onChange={(e) =>
-                      setProjectForm((prev) => ({
-                        ...prev,
-                        location: e.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Gorwa BIDC, Vadodara"
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-800 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                  />
-                </div>
               </div>
+
+              {/* Location Picker (State, City, Predefined Area, Pincode) */}
+              <LocationPicker
+                state={projectForm.state}
+                city={projectForm.city}
+                area={projectForm.area}
+                customArea={projectForm.customArea}
+                pincode={projectForm.pincode}
+                onChange={(patch) =>
+                  setProjectForm((prev) => ({
+                    ...prev,
+                    ...patch,
+                    location: [
+                      patch.area !== undefined ? (patch.area === "Other" ? patch.customArea ?? prev.customArea : patch.area) : (prev.area === "Other" ? prev.customArea : prev.area),
+                      patch.city ?? prev.city,
+                      patch.state ?? prev.state,
+                      patch.pincode ?? prev.pincode,
+                    ]
+                      .filter(Boolean)
+                      .join(", "),
+                  }))
+                }
+              />
 
               {/* Dynamic Stage Rules Notice for Upcoming */}
               {projectForm.stage === "UPCOMING" && (
@@ -2057,7 +2085,7 @@ export default function BusinessDetailPage() {
                 ) : (
                   <div className="space-y-3">
                     {/* Upload Controls */}
-                    {canManage && (
+                    {canManageDocs && (
                       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                         <select
                           value={uploadCategory}
@@ -2122,7 +2150,7 @@ export default function BusinessDetailPage() {
                               >
                                 <ExternalLink size={11} /> Open
                               </button>
-                              {canManage && (
+                              {canManageDocs && (
                                 <button
                                   onClick={() => handleDeleteDocument(doc)}
                                   className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"

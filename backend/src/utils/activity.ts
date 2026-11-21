@@ -1,6 +1,5 @@
 import { Types } from "mongoose";
 import { Activity } from "../models/Activity";
-import { Audit } from "../models/Audit";
 
 export async function logActivity(input: {
   lead: string | any;
@@ -17,20 +16,5 @@ export async function logActivity(input: {
     title: input.title,
     description: input.description,
     metadata: input.metadata,
-  });
-}
-
-export async function logAudit(input: {
-  actor?: string;
-  action: string;
-  entity: string;
-  entityId: string;
-  before?: unknown;
-  after?: unknown;
-  ip?: string;
-}) {
-  return Audit.create({
-    ...input,
-    actor: input.actor ? new Types.ObjectId(input.actor) : undefined,
   });
 }

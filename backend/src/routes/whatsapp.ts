@@ -11,7 +11,6 @@ import { sentTodayCount } from "../services/whatsapp/queue";
 import { renderTemplate, TEMPLATE_VARIABLES, DEFAULT_TEMPLATE_BODY, PRESET_TEMPLATES } from "../services/whatsapp/template";
 import { canAccessLead } from "../utils/leadAccess";
 import { normalizePhone } from "../utils/phone";
-import { logAudit } from "../utils/activity";
 import { env } from "../config/env";
 
 const r = Router();
@@ -78,7 +77,6 @@ r.post("/connect", auth, roles("BUSINESS"), async (req, res) => {
   if (!env.WA_ENABLED) return res.status(503).json({ message: "WhatsApp integration is disabled on this server" });
   try {
     await whatsappManager.start(businessId, { userId: req.user!.id });
-    await logAudit({ actor: req.user!.id, action: "WHATSAPP_CONNECT_STARTED", entity: "Business", entityId: businessId, ip: req.ip });
     res.json(await sessionView(businessId));
   } catch (error: any) {
     res.status(500).json({ message: error?.message || "Could not start WhatsApp session" });
@@ -96,7 +94,6 @@ r.post("/disconnect", auth, roles("BUSINESS"), async (req, res) => {
   const businessId = await callerBusinessId(req);
   if (!businessId) return res.status(400).json({ message: "Your account is not linked to a business" });
   await whatsappManager.logout(businessId);
-  await logAudit({ actor: req.user!.id, action: "WHATSAPP_DISCONNECTED", entity: "Business", entityId: businessId, ip: req.ip });
   res.json(await sessionView(businessId));
 });
 
@@ -128,9 +125,12 @@ const templateSchema = z.object({
   isDefault: z.boolean().optional().default(false),
 });
 
-r.post("/templates", auth, roles("BUSINESS"), validateBody(templateSchema), async (req, res) => {
+/* Templates are written and approved by the LeadFlow admin team (per business).
+   Business owners and sales staff can only pick a template when sending. */
+
+r.post("/templates", auth, roles("ADMIN", "MANAGER"), validateBody(templateSchema), async (req, res) => {
   const businessId = await callerBusinessId(req);
-  if (!businessId) return res.status(400).json({ message: "Your account is not linked to a business" });
+  if (!businessId) return res.status(400).json({ message: "Choose a business (?business=<id>)" });
   if ((await MessageTemplate.countDocuments({ business: businessId })) >= 30) {
     return res.status(400).json({ message: "You can keep up to 30 templates" });
   }
@@ -140,9 +140,9 @@ r.post("/templates", auth, roles("BUSINESS"), validateBody(templateSchema), asyn
 });
 
 /** Add one of the ready-made templates to this business (owner can edit it afterwards). */
-r.post("/templates/presets/:key", auth, roles("BUSINESS"), async (req, res) => {
+r.post("/templates/presets/:key", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const businessId = await callerBusinessId(req);
-  if (!businessId) return res.status(400).json({ message: "Your account is not linked to a business" });
+  if (!businessId) return res.status(400).json({ message: "Choose a business (?business=<id>)" });
   const preset = PRESET_TEMPLATES.find((p) => p.key === req.params.key);
   if (!preset) return res.status(404).json({ message: "Template not found" });
   if ((await MessageTemplate.countDocuments({ business: businessId })) >= 30) {
@@ -160,7 +160,7 @@ r.post("/templates/presets/:key", auth, roles("BUSINESS"), async (req, res) => {
   res.status(201).json({ template });
 });
 
-r.put("/templates/:id", auth, roles("BUSINESS"), validateBody(templateSchema), async (req, res) => {
+r.put("/templates/:id", auth, roles("ADMIN", "MANAGER"), validateBody(templateSchema), async (req, res) => {
   const businessId = await callerBusinessId(req);
   const template = await MessageTemplate.findOne({ _id: req.params.id, business: businessId });
   if (!template) return res.status(404).json({ message: "Template not found" });
@@ -170,7 +170,7 @@ r.put("/templates/:id", auth, roles("BUSINESS"), validateBody(templateSchema), a
   res.json({ template });
 });
 
-r.delete("/templates/:id", auth, roles("BUSINESS"), async (req, res) => {
+r.delete("/templates/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const businessId = await callerBusinessId(req);
   await MessageTemplate.deleteOne({ _id: req.params.id, business: businessId });
   res.json({ success: true });
@@ -255,6 +255,7 @@ r.get("/leads/:leadId/compose", auth, async (req, res) => {
 });
 
 const sendSchema = z.object({
+  /** Ignored. The text is rendered on the server from the chosen template. */
   body: z.string().trim().max(4000).optional().default(""),
   templateId: z.union([objectId, z.literal("default"), z.string().regex(/^preset:[a-z_]+$/), z.literal("")]).optional().default(""),
   documentIds: z.array(objectId).max(10).optional().default([]),
@@ -269,7 +270,40 @@ r.post("/leads/:leadId/send", auth, roles("BUSINESS", "SALES"), whatsappSendLimi
   if (lead.whatsappOptOut) return res.status(400).json({ message: "This lead opted out of WhatsApp messages" });
   const to = normalizePhone(lead.phone, env.WA_DEFAULT_COUNTRY_CODE);
   if (!to) return res.status(400).json({ message: "This lead does not have a valid phone number" });
-  if (!body.body && !body.documentIds.length) return res.status(400).json({ message: "Write a message or attach a document" });
+
+  // The wording always comes from a template the admin approved: business owners
+  // and sales staff pick one, they never supply their own text.
+  if (!body.templateId) return res.status(400).json({ message: "Choose a template to send" });
+
+  const [sendBusiness, ownTemplateCount] = await Promise.all([
+    Business.findById(businessId).select("name contactNo").lean(),
+    MessageTemplate.countDocuments({ business: businessId }),
+  ]);
+  const ctx = { lead, project: lead.businessProject || null, business: sendBusiness, sender: { name: req.user!.name } };
+
+  let templateBody: string;
+  let templateRef: string | undefined;
+
+  if (body.templateId.startsWith("preset:")) {
+    // Presets are only offered while the business has no templates of its own.
+    if (ownTemplateCount) return res.status(400).json({ message: "Choose one of your business templates" });
+    const preset = PRESET_TEMPLATES.find((p) => `preset:${p.key}` === body.templateId);
+    if (!preset) return res.status(400).json({ message: "That template is no longer available" });
+    templateBody = preset.body;
+  } else {
+    const tpl: any =
+      body.templateId === "default"
+        ? await MessageTemplate.findOne({ business: businessId }).sort({ isDefault: -1, createdAt: 1 }).lean()
+        : await MessageTemplate.findOne({ _id: body.templateId, business: businessId }).lean();
+    if (!tpl) return res.status(400).json({ message: "That template does not belong to this business" });
+    templateBody = tpl.body;
+    templateRef = String(tpl._id);
+  }
+
+  const renderedBody = renderTemplate(templateBody, ctx).trim();
+  if (!renderedBody && !body.documentIds.length) {
+    return res.status(400).json({ message: "This template renders an empty message" });
+  }
 
   if ((await sentTodayCount(businessId)) >= env.WA_DAILY_LIMIT) {
     return res.status(429).json({ message: `Daily WhatsApp limit of ${env.WA_DAILY_LIMIT} messages reached. This protects your number from being banned.` });
@@ -296,8 +330,8 @@ r.post("/leads/:leadId/send", auth, roles("BUSINESS", "SALES"), whatsappSendLimi
     lead: lead._id,
     sentBy: req.user!.id,
     to,
-    body: body.body,
-    template: objectId.safeParse(body.templateId).success ? body.templateId : undefined,
+    body: renderedBody,
+    template: templateRef,
     documents,
     status: "QUEUED",
   });

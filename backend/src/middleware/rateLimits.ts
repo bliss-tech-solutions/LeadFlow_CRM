@@ -40,3 +40,12 @@ export const whatsappSendLimiter = rateLimit({
   keyGenerator: (req) => String((req as any).user?.id ?? ipKeyGenerator(req.ip ?? "")),
   message: { message: "You are sending WhatsApp messages too quickly. Please slow down." },
 });
+
+/** Token refresh: generous for real devices, blocks brute force on refresh tokens. */
+export const refreshLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: isProd ? 120 : 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { code: "RATE_LIMITED", message: "Too many requests. Please try again shortly." },
+});

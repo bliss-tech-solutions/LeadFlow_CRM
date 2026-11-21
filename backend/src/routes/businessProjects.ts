@@ -1,3 +1,4 @@
+import { Types } from "mongoose";
 import { Router } from "express";
 import crypto from "crypto";
 import { BusinessProject } from "../models/BusinessProject";
@@ -5,7 +6,7 @@ import { Business } from "../models/Business";
 import { Lead } from "../models/Lead";
 import { User } from "../models/User";
 import { auth, roles } from "../middleware/auth";
-import { logActivity, logAudit } from "../utils/activity";
+import { logActivity } from "../utils/activity";
 import {
   createDocumentDownloadUrl,
   createDocumentUploadUrl,
@@ -16,6 +17,7 @@ import { Notification } from "../models/Notification";
 import { remapUnmappedLeads } from "../services/leadRemap.service";
 import { containsRegex, exactRegex } from "../utils/regex";
 import { salesBelongsToProject, stripQuota } from "../utils/tenant";
+import { invalidateUser } from "../utils/userCache";
 
 const r = Router();
 
@@ -28,7 +30,33 @@ const DOCUMENT_CATEGORIES = [
   "OTHER",
 ];
 
-const MAX_DOCUMENT_SIZE = 25 * 1024 * 1024;
+/** Upload limits: documents up to 20 MB, images up to 1 MB (apps compress photos before upload). */
+const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
+const MAX_IMAGE_SIZE = 1 * 1024 * 1024;
+const ALLOWED_DOC_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+/** Validate an upload request; returns an error message or null. */
+function checkUpload(contentType: string, size: number): string | null {
+  const type = String(contentType || "").toLowerCase();
+  if (ALLOWED_IMAGE_TYPES.has(type)) {
+    if (!size || size <= 0 || size > MAX_IMAGE_SIZE) return "Images must be 1 MB or smaller";
+    return null;
+  }
+  if (ALLOWED_DOC_TYPES.has(type)) {
+    if (!size || size <= 0 || size > MAX_DOCUMENT_SIZE) return "Documents must be 20 MB or smaller";
+    return null;
+  }
+  return "Only PDF, Word, Excel, PowerPoint, JPG, PNG or WEBP files are allowed";
+}
 
 function isAdmin(req: any) {
   return req.user?.role === "ADMIN" || req.user?.role === "MANAGER";
@@ -68,15 +96,8 @@ async function canManageProjectDocuments(req: any, projectId: string) {
   // UPCOMING projects cannot have documents uploaded
   if (project.stage === "UPCOMING") return false;
 
-  if (isAdmin(req)) return true;
-
-  if (req.user?.role === "BUSINESS") {
-    if (req.user.business && String(project.business) === String(req.user.business)) return true;
-    if (String(req.user.businessProject) === String(projectId)) return true;
-    if (Array.isArray(req.user.assignedProjects) && req.user.assignedProjects.some((p: any) => String(p) === String(projectId))) return true;
-  }
-
-  return false;
+  // Project content (details & documents) is maintained by the LeadFlow admin team only.
+  return isAdmin(req);
 }
 
 function getObjectUrl(key: string) {
@@ -94,8 +115,12 @@ function getObjectUrl(key: string) {
 r.get("/", auth, async (req, res) => {
   const filter: Record<string, unknown> = { isActive: true };
 
-  const { business, stage, search = "", page = "1", limit = "10" } =
+  const { business, stage, search = "", page = "1", limit = "10", state, city, area } =
     req.query as Record<string, string>;
+
+  if (state) filter.state = state;
+  if (city) filter.city = city;
+  if (area) filter.area = area;
 
   if (business && isAdmin(req)) {
     filter.business = business;
@@ -130,6 +155,9 @@ r.get("/", auth, async (req, res) => {
       { name: containsRegex(normalizedSearch) },
       { developerGroup: containsRegex(normalizedSearch) },
       { location: containsRegex(normalizedSearch) },
+      { city: containsRegex(normalizedSearch) },
+      { area: containsRegex(normalizedSearch) },
+      { pincode: containsRegex(normalizedSearch) },
       { reraNumber: containsRegex(normalizedSearch) },
       { stage: containsRegex(normalizedSearch) },
     ];
@@ -166,6 +194,7 @@ r.get("/:id", auth, async (req, res) => {
   }
 
   const project = await BusinessProject.findById(req.params.id)
+    .populate("business", "name contactNo")
     .populate("createdBy", "name")
     .populate("updatedBy", "name")
     .populate("documents.uploadedBy", "name")
@@ -176,7 +205,157 @@ r.get("/:id", auth, async (req, res) => {
   }
 
   if (!isAdmin(req)) stripQuota(project as any);
-  res.json({ project });
+
+  // Sales staff working on this project (owners & admins only).
+  let team: any[] = [];
+  const projectBusinessId = (project.business as any)?._id ?? project.business;
+  if (req.user?.role !== "SALES" && projectBusinessId) {
+    team = await User.find({ role: "SALES", business: projectBusinessId })
+      .select("name email isActive profilePhotoUrl assignedProjects")
+      .sort({ name: 1 })
+      .lean();
+    team = team.map((u: any) => ({
+      _id: u._id,
+      name: u.name,
+      email: u.email,
+      isActive: u.isActive,
+      profilePhotoUrl: u.profilePhotoUrl,
+      // No project restriction = works on every project of the business.
+      onProject: !u.assignedProjects?.length || u.assignedProjects.some((pid: any) => String(pid) === String(project._id)),
+      allProjects: !u.assignedProjects?.length,
+    }));
+  }
+  res.json({ project, team });
+});
+
+/**
+ * GET /api/business-projects/:id/stats?range=day|week|month
+ * Lead volume and outcomes for one project, scoped to what the caller may see.
+ *   day   → last 14 days, week → last 12 weeks, month → last 12 months.
+ */
+r.get("/:id/stats", auth, async (req, res) => {
+  const projectId = String(req.params.id);
+  if (!Types.ObjectId.isValid(projectId) || !(await canViewProject(req, projectId))) {
+    return res.status(403).json({ message: "You do not have access to this project" });
+  }
+  const range = req.query.range === "week" ? "week" : req.query.range === "month" ? "month" : "day";
+  const now = new Date();
+  const since = new Date(now);
+  if (range === "day") since.setDate(since.getDate() - 13);
+  else if (range === "week") since.setDate(since.getDate() - 7 * 11 - ((since.getDay() + 6) % 7));
+  else since.setMonth(since.getMonth() - 11, 1);
+  since.setHours(0, 0, 0, 0);
+
+  const match: Record<string, unknown> = { businessProject: new Types.ObjectId(projectId), deliveryStatus: "RELEASED" };
+  if (req.user?.role === "SALES") match.assignedTo = new Types.ObjectId(req.user.id);
+
+  const format = range === "month" ? "%Y-%m" : range === "week" ? "%G-W%V" : "%Y-%m-%d";
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const todayStart = startOf(now);
+  const weekStart = new Date(todayStart);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const [series, byStatus, totals, team] = await Promise.all([
+    Lead.aggregate([
+      { $match: { ...match, createdAt: { $gte: since } } },
+      {
+        $group: {
+          _id: { $dateToString: { date: "$createdAt", format, timezone: "Asia/Kolkata" } },
+          leads: { $sum: 1 },
+          won: { $sum: { $cond: [{ $eq: ["$status", "WON"] }, 1, 0] } },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]),
+    Lead.aggregate([{ $match: match }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
+    Lead.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          today: { $sum: { $cond: [{ $gte: ["$createdAt", todayStart] }, 1, 0] } },
+          thisWeek: { $sum: { $cond: [{ $gte: ["$createdAt", weekStart] }, 1, 0] } },
+          thisMonth: { $sum: { $cond: [{ $gte: ["$createdAt", monthStart] }, 1, 0] } },
+          won: { $sum: { $cond: [{ $eq: ["$status", "WON"] }, 1, 0] } },
+          uncontacted: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "NEW"] }, { $not: [{ $ifNull: ["$lastContactAt", false] }] }] }, 1, 0] } },
+          unassigned: { $sum: { $cond: [{ $ifNull: ["$assignedTo", false] }, 0, 1] } },
+        },
+      },
+    ]),
+    req.user?.role === "SALES"
+      ? Promise.resolve([])
+      : Lead.aggregate([
+          { $match: { ...match, assignedTo: { $ne: null } } },
+          { $group: { _id: "$assignedTo", leads: { $sum: 1 }, won: { $sum: { $cond: [{ $eq: ["$status", "WON"] }, 1, 0] } } } },
+          { $sort: { leads: -1 } },
+          { $limit: 20 },
+          { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "u" } },
+          { $project: { leads: 1, won: 1, name: { $ifNull: [{ $arrayElemAt: ["$u.name", 0] }, "—"] } } },
+        ]),
+  ]);
+
+  const t = totals[0] || { total: 0, today: 0, thisWeek: 0, thisMonth: 0, won: 0, uncontacted: 0, unassigned: 0 };
+  res.json({
+    range,
+    totals: { ...t, _id: undefined, conversionRate: t.total ? Math.round((t.won / t.total) * 1000) / 10 : 0 },
+    series: series.map((x) => ({ period: x._id, leads: x.leads, won: x.won })),
+    byStatus: Object.fromEntries(byStatus.map((x: any) => [x._id, x.count])),
+    team,
+  });
+});
+
+/**
+ * PUT /api/business-projects/:id/team  { userIds: [] }
+ * Business owners (and admins) choose which of their salespeople work on a project.
+ * Only salespeople of the project's own business can be added.
+ */
+r.put("/:id/team", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
+  const project = await BusinessProject.findById(req.params.id).select("_id name business");
+  if (!project) return res.status(404).json({ message: "Project not found" });
+  if (req.user?.role === "BUSINESS" && String(project.business) !== String(req.user.business)) {
+    return res.status(403).json({ message: "Access denied to this project." });
+  }
+  const userIds: string[] = Array.isArray(req.body?.userIds) ? req.body.userIds.map(String).filter((id: string) => Types.ObjectId.isValid(id)) : [];
+  if (userIds.length > 200) return res.status(400).json({ message: "Too many salespeople" });
+
+  const staff = await User.find({ role: "SALES", business: project.business }).select("_id name assignedProjects");
+  const allowed = new Set(staff.map((u) => u.id));
+  const invalid = userIds.filter((id) => !allowed.has(id));
+  if (invalid.length) return res.status(400).json({ message: "Some salespeople are not part of this business" });
+
+  const pid = String(project._id);
+  const businessProjectIds = (await BusinessProject.find({ business: project.business }).select("_id").lean()).map((p) => String(p._id));
+  let changed = 0;
+  const blocked: string[] = [];
+  for (const u of staff) {
+    const current = (u.assignedProjects || []).map(String);
+    const wants = userIds.includes(u.id);
+    // An empty list means "all projects"; materialise it before removing one.
+    const effective = current.length ? current : businessProjectIds;
+    const has = effective.includes(pid);
+    if (wants === has && current.length) continue;
+    if (wants && !current.length) continue; // already on every project
+    const next = wants ? Array.from(new Set([...current, pid])) : effective.filter((x) => x !== pid);
+    if (!next.length) {
+      // An empty list would mean "all projects" — never widen access by removing one.
+      blocked.push(u.name);
+      continue;
+    }
+    u.assignedProjects = next as any;
+    await u.save();
+    invalidateUser(u.id);
+    changed++;
+  }
+
+  if (blocked.length) {
+    return res.status(400).json({
+      message: `${blocked.join(", ")} only work${blocked.length === 1 ? "s" : ""} on this project. Assign another project first, or block them from Sales staff.`,
+      changed,
+    });
+  }
+  res.json({ success: true, changed });
 });
 
 /**
@@ -217,7 +396,11 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
 
   // Stage-specific rules
   const stage = body.stage;
-  const location = body.location?.trim() || body.upcoming?.location?.trim() || body.completed?.location?.trim() || "";
+  const state = body.state?.trim() || "Gujarat";
+  const city = body.city?.trim();
+  const area = body.area?.trim() || "";
+  const pincode = body.pincode?.trim() || "";
+  const location = body.location?.trim() || body.upcoming?.location?.trim() || body.completed?.location?.trim() || [area, city, state, pincode].filter(Boolean).join(", ");
   
   // COMPLETED always has RERA. ONGOING uses body.hasRera. UPCOMING has no RERA.
   const hasRera = stage === "COMPLETED" ? true : (stage === "ONGOING" ? Boolean(body.hasRera) : false);
@@ -263,6 +446,10 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const project = await BusinessProject.create({
     business: businessId,
     name: body.name.trim(),
+    state,
+    city,
+    area,
+    pincode,
     stage,
     location,
     developerGroup: body.developerGroup?.trim(),
@@ -290,20 +477,6 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     updatedBy: req.user!.id,
   });
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_PROJECT_CREATED",
-    entity: "BusinessProject",
-    entityId: project.id,
-    after: {
-      name: project.name,
-      stage: project.stage,
-      business: businessId,
-      productCount: project.products.length,
-      documentCount: project.documents.length,
-    },
-    ip: req.ip,
-  });
 
   const populated = await BusinessProject.findById(project._id)
     .populate("business", "name detail contactNo leadLimit leadLimitType")
@@ -325,30 +498,28 @@ r.patch("/:id/stage", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     return res.status(403).json({ message: "Access denied to this project." });
   }
 
-  const { stage, hasRera, reraNumber, products, location } = req.body;
+  const { stage, hasRera, reraNumber, products, location, state, city, area, pincode } = req.body;
   if (!["ONGOING", "UPCOMING", "COMPLETED"].includes(stage)) {
     return res.status(400).json({ message: "Valid stage is required (ONGOING, UPCOMING, COMPLETED)." });
   }
 
-  const beforeStage = project.stage;
   project.stage = stage;
   if (hasRera !== undefined) project.hasRera = Boolean(hasRera);
   if (reraNumber !== undefined) project.reraNumber = String(reraNumber).trim();
+  if (state !== undefined) project.state = String(state).trim();
+  if (city !== undefined) project.city = String(city).trim() as any;
+  if (area !== undefined) project.area = String(area).trim();
+  if (pincode !== undefined) project.pincode = String(pincode).trim();
   if (location !== undefined) project.location = String(location).trim();
+  else if (area !== undefined || city !== undefined) {
+    project.location = [project.area, project.city, project.state, project.pincode].filter(Boolean).join(", ");
+  }
   if (Array.isArray(products)) project.products = products;
 
   project.updatedBy = req.user!.id as any;
   await project.save();
   void remapUnmappedLeads();
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "PROJECT_STAGE_CHANGED",
-    entity: "BusinessProject",
-    entityId: project.id,
-    before: { stage: beforeStage },
-    after: { stage: project.stage },
-  });
 
   const populated = await BusinessProject.findById(project._id)
     .populate("business", "name detail contactNo")
@@ -376,6 +547,10 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     "name",
     "business",
     "stage",
+    "state",
+    "city",
+    "area",
+    "pincode",
     "location",
     "developerGroup",
     "hasRera",
@@ -466,11 +641,8 @@ r.post("/uploads/presign", auth, roles("ADMIN"), async (req, res) => {
     return res.status(400).json({ message: "Document file name is required" });
   }
 
-  if (!size || size <= 0 || size > MAX_DOCUMENT_SIZE) {
-    return res
-      .status(400)
-      .json({ message: "Document must be between 1 byte and 25 MB" });
-  }
+  const uploadError = checkUpload(contentType, size);
+  if (uploadError) return res.status(400).json({ message: uploadError });
 
   const safeName = name.replace(/[^a-zA-Z0-9._-]/g, "-");
   const key = `leadflow/projects/pending/${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`;
@@ -526,6 +698,8 @@ r.post("/:id/documents", auth, async (req, res) => {
   if (!DOCUMENT_CATEGORIES.includes(category)) {
     return res.status(400).json({ message: "Invalid document category" });
   }
+  const metaError = checkUpload(String(req.body?.mimeType || ""), Number(req.body?.size || 0));
+  if (metaError) return res.status(400).json({ message: metaError });
 
   project.documents.push({
     name,
@@ -545,14 +719,6 @@ r.post("/:id/documents", auth, async (req, res) => {
   await project.save();
   void remapUnmappedLeads();
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "PROJECT_DOCUMENT_UPLOADED",
-    entity: "BusinessProject",
-    entityId: project.id,
-    after: { documentName: name, category },
-    ip: req.ip,
-  });
 
   res.status(201).json({ project: isAdmin(req) ? project : stripQuota(project.toObject()) });
 });
@@ -585,11 +751,8 @@ r.post("/:id/documents/presign", auth, async (req, res) => {
     return res.status(400).json({ message: "Document file name is required" });
   }
 
-  if (!size || size <= 0 || size > MAX_DOCUMENT_SIZE) {
-    return res
-      .status(400)
-      .json({ message: "Document must be between 1 byte and 25 MB" });
-  }
+  const uploadError = checkUpload(contentType, size);
+  if (uploadError) return res.status(400).json({ message: uploadError });
 
   const safeName = name.replace(/[^a-zA-Z0-9._-]/g, "-");
   const key = `leadflow/projects/${project.id}/${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`;
@@ -676,17 +839,6 @@ r.delete(
     await project.save();
   void remapUnmappedLeads();
 
-    await logAudit({
-      actor: req.user!.id,
-      action: "PROJECT_DOCUMENT_DELETED",
-      entity: "BusinessProject",
-      entityId: project.id,
-      before: {
-        documentId: req.params.documentId,
-        documentName: document.name,
-      },
-      ip: req.ip,
-    });
 
     res.json({ success: true, project: isAdmin(req) ? project : stripQuota(project.toObject()) });
   },
@@ -765,15 +917,6 @@ r.patch("/:id/assign", auth, roles("ADMIN"), async (req, res) => {
     }
   }
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_LEADS_REASSIGNED",
-    entity: "BusinessProject",
-    entityId: project.id,
-    before: { leadCount: leads.length },
-    after: { assignedTo: user.id, leadCount: leads.length },
-    ip: req.ip,
-  });
 
   res.json({ success: true, assignedCount: leads.length, user });
 });

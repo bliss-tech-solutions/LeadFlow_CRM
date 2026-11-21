@@ -5,6 +5,8 @@ import { Lead } from "../models/Lead";
 import { logger } from "./logger";
 import { exactRegex } from "../utils/regex";
 import { remapUnmappedLeads } from "../services/leadRemap.service";
+import { CITIES } from "./cities";
+import { matchProduct, productLabel } from "../utils/productMatch";
 
 export async function migrateBusinesses() {
   try {
@@ -82,6 +84,64 @@ export async function migrateBusinesses() {
       backfilled += result.modifiedCount;
     }
     if (backfilled) logger.info(`[migration] Backfilled business on ${backfilled} leads`);
+
+    // 5. Backfill city on businesses (random for now), then cascade to projects and leads.
+    const realCities = CITIES.filter((c) => c !== "Other");
+    const businessesNoCity = await Business.find({ $or: [{ city: { $exists: false } }, { city: null }, { city: "" }] }).select("_id");
+    for (const b of businessesNoCity) {
+      const city = realCities[Math.floor(Math.random() * realCities.length)];
+      await Business.updateOne({ _id: b._id }, { $set: { city } });
+    }
+    if (businessesNoCity.length) logger.info(`[migration] Assigned random city to ${businessesNoCity.length} businesses`);
+
+    // Projects inherit their business's city when they have none.
+    const businessCities = await Business.find({ city: { $nin: [null, ""] } }).select("_id city").lean();
+    for (const b of businessCities) {
+      await BusinessProject.updateMany(
+        { business: b._id, $or: [{ city: { $exists: false } }, { city: null }, { city: "" }] },
+        { $set: { city: b.city } },
+      );
+    }
+
+    // Leads inherit their project's city (fallback to business city) when they have none.
+    const projectCities = await BusinessProject.find({ city: { $nin: [null, ""] } }).select("_id city").lean();
+    let cityLeads = 0;
+    for (const proj of projectCities) {
+      const result = await Lead.updateMany(
+        { businessProject: proj._id, $or: [{ city: { $exists: false } }, { city: null }, { city: "" }] },
+        { $set: { city: proj.city } },
+      );
+      cityLeads += result.modifiedCount;
+    }
+    for (const b of businessCities) {
+      const result = await Lead.updateMany(
+        { business: b._id, $or: [{ city: { $exists: false } }, { city: null }, { city: "" }] },
+        { $set: { city: b.city } },
+      );
+      cityLeads += result.modifiedCount;
+    }
+    if (cityLeads) logger.info(`[migration] Backfilled city on ${cityLeads} leads`);
+
+    // 6. Backfill interestedProduct on leads from their project's product list.
+    const projectsWithProducts = await BusinessProject.find({ "products.0": { $exists: true } })
+      .select("_id products")
+      .lean();
+    let productLeads = 0;
+    for (const proj of projectsWithProducts) {
+      const products = (proj.products || []) as any[];
+      if (!products.length) continue;
+      const fallback = productLabel(products[0].type, products[0].customType);
+      const leadsToFix = await Lead.find({
+        businessProject: proj._id,
+        $or: [{ interestedProduct: { $exists: false } }, { interestedProduct: null }, { interestedProduct: "" }],
+      }).select("_id meta.fieldData");
+      for (const lead of leadsToFix) {
+        const matched = matchProduct(lead.meta?.fieldData || [], products);
+        await Lead.updateOne({ _id: lead._id }, { $set: { interestedProduct: matched || fallback } });
+        productLeads++;
+      }
+    }
+    if (productLeads) logger.info(`[migration] Backfilled interestedProduct on ${productLeads} leads`);
 
     logger.info("[migration] Business hierarchy migration completed successfully.");
 

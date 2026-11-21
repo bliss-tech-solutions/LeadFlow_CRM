@@ -43,6 +43,23 @@ const schema = z.object({
   // Lead SLA: minutes before an uncontacted NEW lead raises an alert.
   LEAD_SLA_MINUTES: z.coerce.number().default(15),
 
+  // Mobile apps: forced update / maintenance (see routes/appConfig.ts)
+  APP_MIN_VERSION_ADMIN: z.string().default("1.0.0"),
+  APP_MIN_VERSION_PARTNER: z.string().default("1.0.0"),
+  APP_LATEST_VERSION_ADMIN: z.string().default("1.0.0"),
+  APP_LATEST_VERSION_PARTNER: z.string().default("1.0.0"),
+  APP_MAINTENANCE: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
+  SUPPORT_EMAIL: z.string().default("support@leadflow.app"),
+  STORE_URL_ANDROID_ADMIN: z.string().optional(),
+  STORE_URL_ANDROID_PARTNER: z.string().optional(),
+  STORE_URL_IOS_ADMIN: z.string().optional(),
+  STORE_URL_IOS_PARTNER: z.string().optional(),
+  /** Optional: Expo access token if "Enhanced push security" is enabled in EAS. */
+  EXPO_ACCESS_TOKEN: z.string().optional(),
+
   // Optional error tracking
   SENTRY_DSN: z.string().optional(),
 });

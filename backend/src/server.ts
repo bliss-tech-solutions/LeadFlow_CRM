@@ -19,7 +19,6 @@ import userRoutes from "./routes/users";
 import leadRoutes from "./routes/leads";
 import followupRoutes from "./routes/followups";
 import documentRoutes from "./routes/documents";
-import auditRoutes from "./routes/audit";
 import metaRoutes from "./routes/meta";
 import leadSyncRoutes from "./routes/leadsync";
 import notificationRoutes from "./routes/notifications";
@@ -28,7 +27,11 @@ import businessProjectRoutes from "./routes/businessProjects";
 import leadDeliveryRoutes from "./routes/leadDelivery";
 import whatsappRoutes from "./routes/whatsapp";
 import analyticsRoutes from "./routes/analytics";
-import adminRoutes from "./routes/admin";
+import adminRoutes, { metaDataCitiesHandler } from "./routes/admin";
+import appConfigRoutes from "./routes/appConfig";
+import spendRoutes from "./routes/spend";
+import reportsRoutes from "./routes/reports";
+import { processPushReceipts } from "./services/push.service";
 import { releaseHeldLeads, assignUnassignedLeads } from "./services/leadDelivery.service";
 import { retryFailedWebhookEvents } from "./services/webhookEvents.service";
 import { processLeadSla, processAutoReassign, processDailyDigests } from "./services/automation.service";
@@ -115,7 +118,6 @@ app.use("/api/users", auth, userRoutes);
 app.use("/api/leads", leadRoutes);
 app.use("/api/followups", followupRoutes);
 app.use("/api/documents", documentRoutes);
-app.use("/api/audit", auditRoutes);
 app.use("/api/meta", metaRoutes);
 app.use("/api/leadsync", leadSyncRoutes);
 app.use("/api/notifications", notificationRoutes);
@@ -125,6 +127,10 @@ app.use("/api/lead-delivery", leadDeliveryRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/spend", spendRoutes);
+app.use("/api/reports", reportsRoutes);
+app.use("/api/app", appConfigRoutes);
+app.get("/api/meta-data/cities", metaDataCitiesHandler);
 
 // 404
 app.use((_req, res) =>
@@ -212,6 +218,9 @@ function startJobs() {
       await processDailyDigests();
     }),
   );
+
+  // Expo push delivery receipts: disable tokens of uninstalled apps.
+  timers.push(every("push-receipts", 15 * 60_000, () => processPushReceipts()));
 
   // Retry failed webhook events (transient Graph API / DB errors).
   timers.push(every("webhook-retry", 5 * 60_000, () => retryFailedWebhookEvents(io)));

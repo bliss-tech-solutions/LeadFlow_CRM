@@ -8,7 +8,6 @@ import { Notification } from "../models/Notification";
 import { logActivity } from "../utils/activity";
 import { emitLeadEvent } from "../sockets";
 import { logger } from "../config/logger";
-import { sendPushNotification } from "./push.service";
 
 const CRM_TIMEZONE = "Asia/Kolkata";
 
@@ -762,13 +761,6 @@ export async function releaseHeldLeads(io: any) {
       business: (lead as any).business,
     });
 
-    // Send instant push notification to the assigned salesperson
-    void sendPushNotification(assignee._id, {
-      title: "🔥 New Lead Assigned!",
-      body: `${lead.name} (${lead.phone || lead.email || "No contact info"}) is ready for call`,
-      data: { leadId: String(lead.id), type: "NEW_LEAD" },
-      channelId: "leadflow_alerts",
-    }).catch(() => undefined);
 
     released += 1;
   }

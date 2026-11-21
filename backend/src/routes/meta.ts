@@ -6,7 +6,6 @@ import { webhookLimiter } from "../middleware/rateLimits";
 import { logger } from "../config/logger";
 import { WebhookEvent } from "../models/WebhookEvent";
 import { recordAndIngest, replayWebhookEvent, splitMetaPayload } from "../services/webhookEvents.service";
-import { logAudit } from "../utils/activity";
 
 const r = Router();
 
@@ -167,14 +166,6 @@ r.get("/events/:id", auth, roles("ADMIN"), async (req, res) => {
 r.post("/events/:id/replay", auth, roles("ADMIN"), async (req, res) => {
   try {
     const result = await replayWebhookEvent(String(req.params.id), req.app.get("io"));
-    await logAudit({
-      actor: req.user!.id,
-      action: "WEBHOOK_REPLAYED",
-      entity: "WebhookEvent",
-      entityId: String(req.params.id),
-      after: { leadId: result.lead?.id, duplicate: result.duplicate },
-      ip: req.ip,
-    });
     res.json({ success: true, duplicate: result.duplicate, leadId: result.lead?.id });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error?.message || "Replay failed" });

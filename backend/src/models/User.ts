@@ -17,6 +17,16 @@ export interface IUser extends Document {
   profilePhotoUrl?: string;
   profilePhotoKey?: string;
   tokenVersion: number;
+  notificationPrefs: {
+    newLead: boolean;
+    assignment: boolean;
+    followup: boolean;
+    sla: boolean;
+    mention: boolean;
+    whatsapp: boolean;
+    activity: boolean;
+    system: boolean;
+  };
   lastLoginAt?: Date;
   lastAutoAssignedAt?: Date;
   resetTokenHash?: string;
@@ -77,6 +87,17 @@ const schema = new Schema<IUser>(
     profilePhotoUrl: String,
     profilePhotoKey: String,
     tokenVersion: { type: Number, default: 0 },
+    // Which notification categories are also delivered as phone push.
+    notificationPrefs: {
+      newLead: { type: Boolean, default: true },
+      assignment: { type: Boolean, default: true },
+      followup: { type: Boolean, default: true },
+      sla: { type: Boolean, default: true },
+      mention: { type: Boolean, default: true },
+      whatsapp: { type: Boolean, default: true },
+      activity: { type: Boolean, default: false },
+      system: { type: Boolean, default: true },
+    },
     lastLoginAt: Date,
     lastAutoAssignedAt: Date,
     resetTokenHash: { type: String, select: false },

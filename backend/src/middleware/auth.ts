@@ -11,6 +11,16 @@ export type AuthUser = {
   business?: string;
   assignedProjects?: string[];
   businessProject?: string;
+  /** Set when the request comes from a mobile app. */
+  app?: "admin-app" | "partner-app";
+  /** Mobile device session id (app tokens only). */
+  sessionId?: string;
+};
+
+/** Which roles may use each mobile app. Enforced at login, refresh and on every request. */
+export const APP_ROLES: Record<"admin-app" | "partner-app", AuthUser["role"][]> = {
+  "admin-app": ["ADMIN", "MANAGER"],
+  "partner-app": ["BUSINESS", "SALES"],
 };
 
 declare global {
@@ -21,7 +31,7 @@ declare global {
   }
 }
 
-type TokenPayload = Partial<AuthUser> & { id?: string; tv?: number };
+type TokenPayload = Partial<AuthUser> & { id?: string; tv?: number; sid?: string };
 
 export function signUserToken(u: {
   id: string;
@@ -32,7 +42,7 @@ export function signUserToken(u: {
   assignedProjects?: unknown[];
   businessProject?: unknown;
   tokenVersion?: number;
-}) {
+}, opts: { app?: "admin-app" | "partner-app"; sessionId?: string; expiresIn?: string } = {}) {
   return jwt.sign(
     {
       id: u.id,
@@ -43,9 +53,10 @@ export function signUserToken(u: {
       assignedProjects: Array.isArray(u.assignedProjects) ? u.assignedProjects.map(String) : [],
       businessProject: u.businessProject ? String(u.businessProject) : undefined,
       tv: Number(u.tokenVersion || 0),
+      ...(opts.app ? { app: opts.app, sid: opts.sessionId } : {}),
     },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_EXPIRES_IN as any },
+    { expiresIn: (opts.expiresIn || env.JWT_EXPIRES_IN) as any },
   );
 }
 
@@ -66,6 +77,10 @@ export async function resolveToken(token: string): Promise<AuthUser | null> {
   const live = await getLiveUser(String(decoded.id));
   if (!live || !live.isActive) return null;
   if (Number(decoded.tv || 0) !== live.tokenVersion) return null;
+  // App tokens only work for the roles that app is built for (e.g. a Partner-app
+  // token can never act as ADMIN even if the account's role changes later).
+  const app = decoded.app === "admin-app" || decoded.app === "partner-app" ? decoded.app : undefined;
+  if (app && !APP_ROLES[app].includes(live.role)) return null;
 
   // Authorization data always comes from the database, never from stale token claims.
   return {
@@ -76,6 +91,8 @@ export async function resolveToken(token: string): Promise<AuthUser | null> {
     business: live.business,
     assignedProjects: live.assignedProjects,
     businessProject: live.businessProject,
+    app,
+    sessionId: app && decoded.sid ? String(decoded.sid) : undefined,
   };
 }
 

@@ -115,12 +115,12 @@ export default function MyDayPage() {
         ))}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-3">
+      <div className="grid gap-5 xl:grid-cols-3 items-start">
         <section className="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
           <h2 className="flex items-center gap-2 font-semibold text-rose-700">
             <AlarmClock size={16} /> Overdue
           </h2>
-          <div className="mt-2 divide-y divide-slate-100">
+          <div className="mt-2 divide-y divide-slate-100 max-h-[460px] overflow-y-auto">
             {data?.overdue?.length ? data.overdue.map((f: any) => <FollowupRow key={f._id} f={f} overdue />) : <p className="py-6 text-center text-xs text-slate-500">Nothing overdue. 🎉</p>}
           </div>
         </section>
@@ -129,7 +129,7 @@ export default function MyDayPage() {
           <h2 className="flex items-center gap-2 font-semibold text-slate-900">
             <CalendarCheck2 size={16} className="text-amber-600" /> Later today
           </h2>
-          <div className="mt-2 divide-y divide-slate-100">
+          <div className="mt-2 divide-y divide-slate-100 max-h-[460px] overflow-y-auto">
             {data?.today?.length ? data.today.map((f: any) => <FollowupRow key={f._id} f={f} />) : <p className="py-6 text-center text-xs text-slate-500">No more follow-ups today.</p>}
           </div>
         </section>
@@ -143,7 +143,7 @@ export default function MyDayPage() {
               All <ArrowRight size={12} />
             </Link>
           </div>
-          <div className="mt-2 divide-y divide-slate-100">
+          <div className="mt-2 divide-y divide-slate-100 max-h-[460px] overflow-y-auto">
             {!data && (
               <div className="flex items-center justify-center py-6 text-slate-400">
                 <Loader2 size={16} className="animate-spin" />

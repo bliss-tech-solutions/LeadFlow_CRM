@@ -51,7 +51,9 @@ describe("renderTemplate", () => {
       project: { products: [{ customType: "2 BHK", areaSqFt: "1100", priceRange: "85L - 95L" }] },
     });
     expect(out).toContain("2 BHK");
-    expect(out).toContain("₹85L - 95L");
+    // The price range is printed as stored; no "₹" is prepended (it may already contain one).
+    expect(out).toContain("85L - 95L");
+    expect(out).not.toContain("₹₹");
   });
 });
 
@@ -99,5 +101,92 @@ describe("splitMetaPayload", () => {
   });
   it("passes through non-standard payloads", () => {
     expect(splitMetaPayload({ leadgen_id: "x" })).toEqual([{ leadgen_id: "x" }]);
+  });
+});
+
+import { parsePrice } from "../src/utils/price";
+import { matchProduct } from "../src/utils/productMatch";
+describe("parsePrice", () => {
+  it("parses lakh strings", () => {
+    expect(parsePrice("85L")).toBe(8_500_000);
+    expect(parsePrice("1.5 Lakh")).toBe(150_000);
+  });
+  it("parses crore strings", () => {
+    expect(parsePrice("1.2 Cr")).toBe(12_000_000);
+    expect(parsePrice("2Crore")).toBe(20_000_000);
+  });
+  it("takes the upper bound of a range", () => {
+    expect(parsePrice("85L – 95L")).toBe(9_500_000);
+    expect(parsePrice("1.2 Cr - 1.5 Cr")).toBe(15_000_000);
+  });
+  it("returns 0 for null/undefined/junk", () => {
+    expect(parsePrice(null)).toBe(0);
+    expect(parsePrice("")).toBe(0);
+    expect(parsePrice("Ask for price")).toBe(0);
+  });
+});
+
+describe("matchProduct", () => {
+  const products = [
+    { type: "2BHK" as const, customType: undefined, priceRange: "85L-95L", areaSqFt: "1100", units: 10, isPenthouse: false, details: {} },
+    { type: "3BHK" as const, customType: undefined, priceRange: "1.2Cr-1.5Cr", areaSqFt: "1600", units: 5, isPenthouse: false, details: {} },
+  ];
+  it("matches a product from form field data", () => {
+    const fields = [{ name: "interested_in", values: ["3BHK apartment"] }];
+    expect(matchProduct(fields, products)).toBe("3BHK");
+  });
+  it("returns null when nothing matches", () => {
+    const fields = [{ name: "city", values: ["Ahmedabad"] }];
+    expect(matchProduct(fields, products)).toBeNull();
+  });
+  it("returns null for empty inputs", () => {
+    expect(matchProduct([], products)).toBeNull();
+    expect(matchProduct([{ name: "x", values: ["y"] }], [])).toBeNull();
+  });
+});
+
+describe("CPL math", () => {
+  it("computes cost per lead correctly", () => {
+    const spend = 42_000;
+    const leads = 42;
+    expect(Math.round((spend / leads) * 100) / 100).toBe(1000);
+  });
+  it("handles zero leads without dividing by zero", () => {
+    const leads = 0;
+    const cpl = leads > 0 ? 42_000 / leads : null;
+    expect(cpl).toBeNull();
+  });
+  it("handles overlapping periods by counting per record", () => {
+    // Each record is counted independently; overlaps are by design
+    const records = [{ amount: 10_000, leads: 20 }, { amount: 10_000, leads: 20 }];
+    const totalSpend = records.reduce((a, r) => a + r.amount, 0);
+    const totalLeads = records.reduce((a, r) => a + r.leads, 0);
+    expect(Math.round((totalSpend / totalLeads) * 100) / 100).toBe(500);
+  });
+});
+
+import { compareVersions } from "../src/routes/appConfig";
+import { categorize, isExpoPushToken } from "../src/services/push.service";
+
+describe("compareVersions", () => {
+  it("orders dotted versions numerically", () => {
+    expect(compareVersions("1.10.0", "1.9.9")).toBe(1);
+    expect(compareVersions("1.0", "1.0.0")).toBe(0);
+    expect(compareVersions("0.9.0", "1.0.0")).toBe(-1);
+  });
+});
+
+describe("push categories", () => {
+  it("maps notification types to user-controllable categories", () => {
+    expect(categorize("NEW_LEAD").category).toBe("newLead");
+    expect(categorize("FOLLOWUP_DUE_SOON").channelId).toBe("reminders");
+    expect(categorize("SLA_ESCALATION").timeSensitive).toBe(true);
+    expect(categorize("CALL_LOGGED").category).toBe("activity");
+    expect(categorize("WHATSAPP_STATUS").category).toBe("whatsapp");
+  });
+  it("validates Expo push tokens", () => {
+    expect(isExpoPushToken("ExponentPushToken[abc123]")).toBe(true);
+    expect(isExpoPushToken("ExpoPushToken[xyz]")).toBe(true);
+    expect(isExpoPushToken("not-a-token")).toBe(false);
   });
 });

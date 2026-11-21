@@ -2,6 +2,7 @@ import { Lead } from "../models/Lead";
 import { BusinessProject } from "../models/BusinessProject";
 import { logger } from "../config/logger";
 import { chooseRandomSalesperson } from "./leadDelivery.service";
+import { matchProduct, productLabel } from "../utils/productMatch";
 
 function clean(str?: any): string {
   if (!str) return "";
@@ -156,8 +157,15 @@ export async function remapUnmappedLeads(): Promise<{ remappedCount: number; sca
 
       if (matchedProjectId) {
         lead.businessProject = matchedProjectId;
-        const matchedProject = await BusinessProject.findById(matchedProjectId).select("business").lean();
+        const matchedProject = await BusinessProject.findById(matchedProjectId).select("business city products").lean();
         if (matchedProject?.business) (lead as any).business = matchedProject.business;
+        if (matchedProject?.city && !lead.city) lead.city = matchedProject.city as any;
+        // Derive the interested product from the lead's form answers against this project's products.
+        if (!lead.interestedProduct && Array.isArray(matchedProject?.products) && matchedProject.products.length) {
+          const matched = matchProduct(lead.meta?.fieldData || [], matchedProject.products as any);
+          const fallback = productLabel(matchedProject.products[0].type, matchedProject.products[0].customType);
+          lead.interestedProduct = matched || fallback;
+        }
         if (!lead.meta) lead.meta = {};
         lead.meta.businessId = String(matchedProjectId);
 

@@ -4,6 +4,7 @@ import { env } from "../config/env";
 import { recordAndIngest } from "../services/webhookEvents.service";
 import { webhookLimiter } from "../middleware/rateLimits";
 import { logger } from "../config/logger";
+import { auth, roles } from "../middleware/auth";
 
 const r = Router();
 
@@ -260,6 +261,90 @@ r.post("/webhook", webhookLimiter, async (req, res) => {
   } catch (error) {
     logger.error("[leadsync] webhook processing failed", { error: (error as any)?.message });
     return res.status(500).json({ received: false, message: "LeadSync webhook processing failed" });
+  }
+});
+
+/**
+ * POST /api/leadsync/test-lead
+ * Test LeadSync ingestion format directly from admin dashboard.
+ */
+r.post("/test-lead", auth, roles("ADMIN"), async (req, res) => {
+  try {
+    const io = req.app.get("io");
+    const body = req.body ?? {};
+    const leadId = String(body.lead_id || body.id || body.leadgen_id || `LEADSYNC-TEST-${Date.now()}`).trim();
+    const name = String(body.name || body.full_name || "Demo LeadSync Lead").slice(0, 120);
+    const email = body.email ? String(body.email).slice(0, 160) : undefined;
+    const phone = body.phone || body.phone_number ? String(body.phone || body.phone_number).slice(0, 30) : "+91 98765 43210";
+    const pageId = body.page_id || "LEADSYNC_PAGE";
+    const pageName = body.page_name || "LeadSync Page";
+    const formId = body.form_id || "LEADSYNC_FORM";
+    const formName = body.form_name || "LeadSync Form";
+    const campaignName = body.campaign_name || body.campaign || "LeadSync Campaign";
+    const formData = body.form_data && typeof body.form_data === "object" ? body.form_data : {};
+
+    const flexibleFormData: Record<string, string> = {};
+    const flexibleFieldList: Array<{ name: string; values: string[] }> = [];
+    for (const [k, v] of Object.entries(formData)) {
+      if (v !== undefined && v !== null && String(v).trim()) {
+        flexibleFormData[k] = String(v);
+        flexibleFieldList.push({ name: k, values: [String(v)] });
+      }
+    }
+
+    const contactFields = [
+      ["full_name", name],
+      ["email", email || ""],
+      ["phone_number", phone],
+    ]
+      .filter((entry) => Boolean(entry[1]))
+      .map(([k, v]) => ({ name: k, values: [String(v)] }));
+
+    const allFieldData = [...contactFields, ...flexibleFieldList];
+
+    const payload = {
+      entry: [
+        {
+          id: String(pageId),
+          changes: [
+            {
+              field: "leadgen",
+              value: {
+                leadgen_id: leadId,
+                page_id: pageId,
+                page_name: pageName,
+                form_id: formId,
+                form_name: formName,
+                ad_id: body.ad_id || "TEST_AD",
+                adgroup_id: body.adset_id || "TEST_ADSET",
+                campaign_name: campaignName,
+                created_time: Math.floor(Date.now() / 1000),
+                name,
+                email,
+                phone,
+                field_data: allFieldData,
+                form_data: flexibleFormData,
+                raw_body: body,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await recordAndIngest("LEADSYNC", payload, io, {
+      fetchDetails: false,
+      source: "LEADSYNC",
+    });
+
+    return res.status(result.duplicate ? 200 : 201).json({
+      success: true,
+      duplicate: result.duplicate,
+      lead: result.lead,
+    });
+  } catch (error: any) {
+    logger.error("[leadsync] test lead failed", { error: error?.message });
+    return res.status(500).json({ success: false, message: error?.message || "Failed to create LeadSync test lead" });
   }
 });
 

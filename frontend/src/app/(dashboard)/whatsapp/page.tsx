@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Loader2,
@@ -23,7 +23,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import Topbar from "../../../components/Topbar";
-import Modal, { btn, field } from "../../../components/Modal";
+import { btn } from "../../../components/Modal";
 import WhatsAppIcon from "../../../components/WhatsAppIcon";
 import { api } from "../../../lib/api";
 import { getUser } from "../../../lib/auth";
@@ -80,12 +80,8 @@ export default function WhatsAppPage() {
   const [qrAge, setQrAge] = useState(0);
 
   const [templates, setTemplates] = useState<any[]>([]);
-  const [variables, setVariables] = useState<{ key: string; label: string }[]>([]);
   const [defaultBody, setDefaultBody] = useState("");
   const [presets, setPresets] = useState<{ key: string; name: string; description: string; body: string }[]>([]);
-  const [adopting, setAdopting] = useState<string | null>(null);
-  const [editing, setEditing] = useState<any | null>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   const [settings, setSettings] = useState<any>(null);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -105,23 +101,9 @@ export default function WhatsAppPage() {
   const loadTemplates = useCallback(async () => {
     const d = await api("/whatsapp/templates");
     setTemplates(d.templates || []);
-    setVariables(d.variables || []);
     setDefaultBody(d.defaultBody || "");
     setPresets(d.presets || []);
   }, []);
-
-  async function adoptPreset(key: string) {
-    setAdopting(key);
-    setError("");
-    try {
-      await api(`/whatsapp/templates/presets/${key}`, { method: "POST" });
-      await loadTemplates();
-    } catch (e: any) {
-      setError(e?.message || "Could not add template");
-    } finally {
-      setAdopting(null);
-    }
-  }
 
   const loadOutbox = useCallback(async () => {
     const d = await api(`/whatsapp/messages?limit=15${outboxFilter ? `&status=${outboxFilter}` : ""}`).catch(() => ({ messages: [] }));
@@ -179,39 +161,6 @@ export default function WhatsAppPage() {
     }
   }
 
-  async function saveTemplate() {
-    if (!editing) return;
-    setError("");
-    try {
-      const payload = { name: editing.name, body: editing.body, isDefault: Boolean(editing.isDefault) };
-      if (editing._id) await api(`/whatsapp/templates/${editing._id}`, { method: "PUT", body: JSON.stringify(payload) });
-      else await api("/whatsapp/templates", { method: "POST", body: JSON.stringify(payload) });
-      setEditing(null);
-      await loadTemplates();
-    } catch (e: any) {
-      setError(e?.message || "Could not save template");
-    }
-  }
-
-  async function deleteTemplate(t: any) {
-    if (!window.confirm(`Delete template "${t.name}"?`)) return;
-    await api(`/whatsapp/templates/${t._id}`, { method: "DELETE" }).catch(() => {});
-    await loadTemplates();
-  }
-
-  function insertVariable(key: string) {
-    const el = bodyRef.current;
-    const token = `{{${key}}}`;
-    if (!el || !editing) return;
-    const start = el.selectionStart ?? editing.body.length;
-    const end = el.selectionEnd ?? start;
-    const next = editing.body.slice(0, start) + token + editing.body.slice(end);
-    setEditing({ ...editing, body: next });
-    window.setTimeout(() => {
-      el.focus();
-      el.setSelectionRange(start + token.length, start + token.length);
-    }, 0);
-  }
 
   async function saveSettings() {
     if (!businessId || !settings) return;
@@ -376,66 +325,14 @@ export default function WhatsAppPage() {
 
       {/* Templates */}
       <section id="templates" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-semibold text-slate-900">Message templates</h2>
-            <p className="text-xs text-slate-500">Reusable intros with lead and project details filled in automatically.</p>
-          </div>
-          <button onClick={() => setEditing({ name: "", body: defaultBody, isDefault: templates.length === 0 })} className={btn.primary}>
-            <Plus size={14} /> New template
-          </button>
+        <div>
+          <h2 className="font-semibold text-slate-900">Message templates</h2>
+          <p className="text-xs text-slate-500">
+            Templates are prepared and approved by your LeadFlow admin team. Your team picks one when sending — lead and project details are filled in automatically.
+          </p>
         </div>
-        {/* Ready-made templates */}
-        {presets.length > 0 && (
-          <div className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
-            <div className="flex items-center gap-2">
-              <Sparkles size={15} className="text-emerald-600" />
-              <b className="text-sm text-slate-900">Ready-made templates</b>
-              <span className="text-xs text-slate-500">— pick one, then edit it to match your voice.</span>
-            </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              {presets.map((p) => {
-                const added = templates.some((t) => t.name === p.name);
-                return (
-                  <div key={p.key} className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
-                    <b className="text-sm text-slate-900">{p.name}</b>
-                    <p className="mt-1 text-[11px] leading-snug text-slate-500">{p.description}</p>
-                    <div className="mt-3 flex-1 rounded-lg bg-[#e7fbe9] p-3">
-                      <p className="line-clamp-[9] whitespace-pre-line text-[11px] leading-relaxed text-slate-700">
-                        {samplePreview(p.body)}
-                      </p>
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        onClick={() => adoptPreset(p.key)}
-                        disabled={adopting === p.key}
-                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        {adopting === p.key ? <Loader2 size={13} className="animate-spin" /> : added ? <CheckCircle2 size={13} /> : <Plus size={13} />}
-                        {added ? "Add again" : "Use this"}
-                      </button>
-                      <button
-                        onClick={() => setEditing({ name: p.name, body: p.body, isDefault: templates.length === 0 })}
-                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <Pencil size={12} /> Customise first
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        <h3 className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-400">Your templates</h3>
-        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {templates.length === 0 && (
-            <p className="rounded-xl bg-slate-50 p-4 text-xs text-slate-500 md:col-span-2 xl:col-span-3">
-              You haven't saved any templates yet. Until you do, your team can choose from the three ready-made templates above when sending.
-            </p>
-          )}
-          {templates.map((t) => (
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {(templates.length ? templates : presets.map((p) => ({ _id: p.key, name: p.name, body: p.body, isDefault: p.key === "intro" }))).map((t: any) => (
             <div key={t._id} className="flex flex-col rounded-xl border border-slate-200 p-4">
               <div className="flex items-center justify-between gap-2">
                 <b className="truncate text-sm text-slate-900">{t.name}</b>
@@ -445,18 +342,11 @@ export default function WhatsAppPage() {
                   </span>
                 )}
               </div>
-              <p className="mt-2 line-clamp-5 flex-1 whitespace-pre-line text-xs text-slate-600">{t.body}</p>
-              <div className="mt-3 flex gap-1.5">
-                <button onClick={() => setEditing({ ...t })} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
-                  <Pencil size={12} /> Edit
-                </button>
-                <button onClick={() => deleteTemplate(t)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] text-slate-500 hover:bg-rose-50 hover:text-rose-600">
-                  <Trash2 size={12} /> Delete
-                </button>
-              </div>
+              <p className="mt-2 line-clamp-6 flex-1 whitespace-pre-line text-xs text-slate-600">{samplePreview(t.body)}</p>
             </div>
           ))}
         </div>
+        <p className="mt-3 text-[11px] text-slate-400">Need a new template or a wording change? Ask your LeadFlow admin.</p>
       </section>
 
       <div className="grid gap-5 xl:grid-cols-2">
@@ -466,48 +356,24 @@ export default function WhatsAppPage() {
             <Settings2 size={17} className="text-indigo-600" />
             <h2 className="font-semibold text-slate-900">Team & automation</h2>
           </div>
+          <p className="mt-1 text-xs text-slate-500">Configured by your LeadFlow admin. Contact them to change these.</p>
           {!settings ? (
             <p className="mt-4 text-xs text-slate-500">Loading settings…</p>
           ) : (
-            <div className="mt-4 space-y-4">
-              <label className="flex items-start justify-between gap-4">
-                <span>
-                  <b className="block text-sm text-slate-800">Sales staff can send WhatsApp</b>
-                  <span className="text-xs text-slate-500">Salespeople message their own leads through this number.</span>
-                </span>
-                <input type="checkbox" checked={Boolean(settings.salesCanSendWhatsApp)} onChange={(e) => setSettings({ ...settings, salesCanSendWhatsApp: e.target.checked })} className="mt-1 h-5 w-5 accent-emerald-600" />
-              </label>
-              <label className="block">
-                <b className="block text-sm text-slate-800">First-contact SLA (minutes)</b>
-                <span className="text-xs text-slate-500">Alert the salesperson if a new lead isn't contacted in time; escalate to you at 2×.</span>
-                <input type="number" min={1} max={1440} value={settings.slaMinutes ?? 15} onChange={(e) => setSettings({ ...settings, slaMinutes: e.target.value })} className={field} />
-              </label>
-              <label className="block">
-                <b className="block text-sm text-slate-800">Auto-reassign untouched leads after (hours)</b>
-                <span className="text-xs text-slate-500">0 turns it off. Moves the lead to the next available salesperson.</span>
-                <input type="number" min={0} max={168} value={settings.autoReassignHours ?? 0} onChange={(e) => setSettings({ ...settings, autoReassignHours: e.target.value })} className={field} />
-              </label>
-              <label className="block">
-                <b className="block text-sm text-slate-800">Lead distribution</b>
-                <select value={settings.assignmentStrategy || "LEAST_LOADED"} onChange={(e) => setSettings({ ...settings, assignmentStrategy: e.target.value })} className={field}>
-                  <option value="LEAST_LOADED">Least loaded first (balanced by today's count)</option>
-                  <option value="ROUND_ROBIN">Strict round robin (take turns)</option>
-                </select>
-              </label>
-              <label className="flex items-start justify-between gap-4">
-                <span>
-                  <b className="block text-sm text-slate-800">Daily email summary</b>
-                  <span className="text-xs text-slate-500">8 AM: new leads, wins, uncontacted and overdue follow-ups.</span>
-                </span>
-                <input type="checkbox" checked={Boolean(settings.dailyDigest)} onChange={(e) => setSettings({ ...settings, dailyDigest: e.target.checked })} className="mt-1 h-5 w-5 accent-indigo-600" />
-              </label>
-              <div className="flex items-center justify-end gap-3">
-                {settingsMsg && <span className="text-xs text-slate-500">{settingsMsg}</span>}
-                <button onClick={saveSettings} disabled={savingSettings} className={btn.primary}>
-                  {savingSettings && <Loader2 size={13} className="animate-spin" />} Save settings
-                </button>
-              </div>
-            </div>
+            <dl className="mt-4 divide-y divide-slate-100 text-sm">
+              {[
+                ["Sales staff can send WhatsApp", settings.salesCanSendWhatsApp ? "Yes" : "No"],
+                ["First-contact SLA", `${settings.slaMinutes ?? 15} minutes`],
+                ["Auto-reassign untouched leads", settings.autoReassignHours ? `After ${settings.autoReassignHours} hours` : "Off"],
+                ["Lead distribution", settings.assignmentStrategy === "ROUND_ROBIN" ? "Round robin" : "Balanced (least loaded)"],
+                ["Daily email summary", settings.dailyDigest ? "On" : "Off"],
+              ].map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between gap-4 py-2.5">
+                  <dt className="text-slate-600">{k}</dt>
+                  <dd className="font-semibold text-slate-900">{v}</dd>
+                </div>
+              ))}
+            </dl>
           )}
         </section>
 
@@ -529,7 +395,7 @@ export default function WhatsAppPage() {
               </button>
             </div>
           </div>
-          <div className="mt-3 divide-y divide-slate-100">
+          <div className="mt-3 divide-y divide-slate-100 max-h-60 overflow-y-scroll">
             {outbox.length === 0 && <p className="py-6 text-center text-xs text-slate-500">No messages yet.</p>}
             {outbox.map((m) => {
               const Icon = msgIcon[m.status] || Clock3;
@@ -556,52 +422,6 @@ export default function WhatsAppPage() {
         </section>
       </div>
 
-      {/* Template editor */}
-      <Modal
-        open={Boolean(editing)}
-        onClose={() => setEditing(null)}
-        size="lg"
-        title={editing?._id ? "Edit template" : "New template"}
-        subtitle="Click a variable to insert it at the cursor."
-        footer={
-          <>
-            <button className={btn.secondary} onClick={() => setEditing(null)}>
-              Cancel
-            </button>
-            <button className={btn.primary} onClick={saveTemplate} disabled={!editing?.name?.trim() || !editing?.body?.trim()}>
-              Save template
-            </button>
-          </>
-        }
-      >
-        {editing && (
-          <div className="space-y-3">
-            <label className="block text-xs font-semibold text-slate-700">
-              Name
-              <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} maxLength={80} placeholder="e.g. Site visit invite" className={field} />
-            </label>
-            <div className="flex flex-wrap gap-1.5">
-              {variables.map((v) => (
-                <button key={v.key} type="button" onClick={() => insertVariable(v.key)} title={v.label} className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 font-mono text-[11px] text-indigo-700 hover:bg-indigo-100">
-                  {`{{${v.key}}}`}
-                </button>
-              ))}
-            </div>
-            <textarea
-              ref={bodyRef}
-              value={editing.body}
-              onChange={(e) => setEditing({ ...editing, body: e.target.value })}
-              rows={12}
-              maxLength={4000}
-              className="w-full rounded-xl border border-slate-200 bg-[#f0fdf4] p-3 text-sm leading-relaxed outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-            />
-            <label className="flex items-center gap-2 text-xs text-slate-700">
-              <input type="checkbox" checked={Boolean(editing.isDefault)} onChange={(e) => setEditing({ ...editing, isDefault: e.target.checked })} className="h-4 w-4 accent-amber-500" />
-              Use as the default template
-            </label>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }

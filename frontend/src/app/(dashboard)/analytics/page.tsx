@@ -66,6 +66,18 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // Performance graph state
+  const PERF_RANGES = [
+    { key: "1m", label: "1M" },
+    { key: "3m", label: "3M" },
+    { key: "6m", label: "6M" },
+    { key: "1y", label: "1Y" },
+    { key: "2y", label: "2Y" },
+  ];
+  const [perfRange, setPerfRange] = useState("1m");
+  const [perfData, setPerfData] = useState<any>(null);
+  const [perfLoading, setPerfLoading] = useState(false);
+
   useEffect(() => {
     if (isAdmin) api("/businesses?limit=100").then((d) => setBusinesses(d.businesses || [])).catch(() => {});
   }, [isAdmin]);
@@ -89,6 +101,17 @@ export default function AnalyticsPage() {
     setFrom(isoDaysAgo(Number(key)));
     setTo(new Date().toISOString().slice(0, 10));
   }
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setPerfLoading(true);
+    const qs = new URLSearchParams({ range: perfRange });
+    if (business) qs.set("business", business);
+    api(`/analytics/performance?${qs}`)
+      .then((d) => setPerfData(d))
+      .catch(() => {})
+      .finally(() => setPerfLoading(false));
+  }, [perfRange, business, isAdmin]);
 
   const trend = useMemo(
     () =>
@@ -328,6 +351,46 @@ export default function AnalyticsPage() {
           </table>
         </section>
       </div>
+
+      {/* Performance graph — admin/manager only */}
+      {isAdmin && (
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">Lead performance</h2>
+              <p className="text-xs text-slate-500">Monthly lead trend over time</p>
+            </div>
+            <div className="inline-flex rounded-xl bg-slate-100 p-1">
+              {PERF_RANGES.map((r) => (
+                <button
+                  key={r.key}
+                  onClick={() => setPerfRange(r.key)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${perfRange === r.key ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {perfLoading ? (
+            <div className="flex h-48 items-center justify-center text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
+          ) : perfData?.data?.length ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={perfData.data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+                <XAxis dataKey="period" tick={{ fontSize: 10, fill: INK_MUTED }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: INK_MUTED }} tickLine={false} axisLine={false} />
+                <Tooltip {...tooltipStyle} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="leads" stroke={SERIES_LEADS} strokeWidth={2} dot={false} name="Leads" />
+                <Line type="monotone" dataKey="won" stroke={SERIES_WON} strokeWidth={2} dot={false} name="Won" />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-48 items-center justify-center text-slate-400 text-sm">No data for this range.</div>
+          )}
+        </section>
+      )}
 
       {/* Team leaderboard */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

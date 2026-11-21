@@ -4,10 +4,11 @@ import { auth, roles } from "../middleware/auth";
 import { Lead } from "../models/Lead";
 import { User } from "../models/User";
 import { Business } from "../models/Business";
+import { BusinessProject } from "../models/BusinessProject";
 import { WebhookEvent } from "../models/WebhookEvent";
 import { WhatsAppSession, WhatsAppMessage } from "../models/WhatsApp";
-import { logAudit } from "../utils/activity";
 import { env } from "../config/env";
+import { CITIES } from "../config/cities";
 
 const r = Router();
 
@@ -77,7 +78,7 @@ r.get("/health", auth, roles("ADMIN", "MANAGER"), async (_req, res) => {
 /**
  * POST /api/admin/impersonate/:userId
  * "View as" a business owner or salesperson for support. Issues a 30-minute
- * token, never for another admin, and records it in the audit log.
+ * token, never for another admin.
  */
 r.post("/impersonate/:userId", auth, roles("ADMIN"), async (req, res) => {
   const target = await User.findById(req.params.userId);
@@ -102,14 +103,6 @@ r.post("/impersonate/:userId", auth, roles("ADMIN"), async (req, res) => {
     { expiresIn: "30m" },
   );
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "USER_IMPERSONATED",
-    entity: "User",
-    entityId: target.id,
-    after: { targetEmail: target.email, targetRole: target.role },
-    ip: req.ip,
-  });
 
   res.json({
     token,
@@ -127,5 +120,98 @@ r.post("/impersonate/:userId", auth, roles("ADMIN"), async (req, res) => {
     expiresInMinutes: 30,
   });
 });
+
+/**
+ * GET /api/admin/overview?city=&from=&to=
+ * Client counts, lead totals and per-city breakdown for the admin home dashboard.
+ */
+r.get("/overview", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
+  const q = req.query as Record<string, string>;
+  const to = q.to && !Number.isNaN(Date.parse(q.to)) ? new Date(q.to) : new Date();
+  to.setHours(23, 59, 59, 999);
+  const from = q.from && !Number.isNaN(Date.parse(q.from))
+    ? new Date(q.from)
+    : new Date(to.getTime() - 29 * 24 * 60 * 60 * 1000);
+  from.setHours(0, 0, 0, 0);
+
+  const cityFilter = q.city ? { city: q.city } : {};
+  const dateFilter = { createdAt: { $gte: from, $lte: to } };
+  const baseMatch = { ...cityFilter, ...dateFilter };
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
+
+  const [
+    totalClients,
+    activeClients,
+    totalLeads,
+    leadsToday,
+    leadsThisMonth,
+    wonLeads,
+    byCity,
+    topProjects,
+  ] = await Promise.all([
+    Business.countDocuments(cityFilter),
+    Business.countDocuments({ ...cityFilter, isActive: true }),
+    Lead.countDocuments(baseMatch),
+    Lead.countDocuments({ ...cityFilter, createdAt: { $gte: todayStart } }),
+    Lead.countDocuments({ ...cityFilter, createdAt: { $gte: monthStart } }),
+    Lead.countDocuments({ ...baseMatch, status: "WON" }),
+    Lead.aggregate([
+      { $match: baseMatch },
+      {
+        $group: {
+          _id: { $ifNull: ["$city", "Unknown"] },
+          leads: { $sum: 1 },
+          won: { $sum: { $cond: [{ $eq: ["$status", "WON"] }, 1, 0] } },
+        },
+      },
+      { $sort: { leads: -1 } },
+    ]),
+    Lead.aggregate([
+      { $match: baseMatch },
+      { $match: { businessProject: { $ne: null } } },
+      { $group: { _id: "$businessProject", leads: { $sum: 1 }, won: { $sum: { $cond: [{ $eq: ["$status", "WON"] }, 1, 0] } } } },
+      { $sort: { leads: -1 } },
+      { $limit: 8 },
+      { $lookup: { from: "businessprojects", localField: "_id", foreignField: "_id", as: "p" } },
+      {
+        $project: {
+          leads: 1,
+          won: 1,
+          name: { $ifNull: [{ $arrayElemAt: ["$p.name", 0] }, "Unknown"] },
+          city: { $ifNull: [{ $arrayElemAt: ["$p.city", 0] }, null] },
+        },
+      },
+    ]),
+  ]);
+
+  // Enrich byCity with client counts per city
+  const clientsByCity = await Business.aggregate([
+    ...(q.city ? [{ $match: { city: q.city } }] : []),
+    { $group: { _id: { $ifNull: ["$city", "Unknown"] }, clients: { $sum: 1 }, activeClients: { $sum: { $cond: ["$isActive", 1, 0] } } } },
+  ]);
+  const clientMap = Object.fromEntries(clientsByCity.map((x: any) => [x._id, { clients: x.clients, activeClients: x.activeClients }]));
+
+  res.json({
+    range: { from, to },
+    summary: { totalClients, activeClients, totalLeads, leadsToday, leadsThisMonth, won: wonLeads },
+    cities: CITIES,
+    byCity: byCity.map((r: any) => ({
+      city: r._id,
+      leads: r.leads,
+      won: r.won,
+      ...(clientMap[r._id] || { clients: 0, activeClients: 0 }),
+    })),
+    topProjects,
+  });
+});
+
+/**
+ * GET /api/meta-data/cities
+ * Public list of predefined city options.
+ */
+export const metaDataCitiesHandler = (_req: any, res: any) => res.json({ cities: CITIES });
 
 export default r;

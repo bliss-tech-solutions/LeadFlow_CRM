@@ -1,0 +1,56 @@
+{
+  "cli": { "version": ">= 16.0.0", "appVersionSource": "remote" },
+  "build": {
+    "base": { "node": "22.13.0" },
+
+    "partner-base": {
+      "extends": "base",
+      "env": { "APP_VARIANT": "partner", "EAS_PROJECT_ID_PARTNER": "cb37b00f-b997-4981-823f-7470c66a83b6" }
+    },
+    "admin-base": {
+      "extends": "base",
+      "env": { "APP_VARIANT": "admin", "EAS_PROJECT_ID_ADMIN": "9afea4df-3a4e-4437-b1fc-2df14d92ce05" }
+    },
+
+    "partner-dev": { "extends": "partner-base", "developmentClient": true, "distribution": "internal", "channel": "partner-dev" },
+    "partner-preview": {
+      "extends": "partner-base",
+      "distribution": "internal",
+      "channel": "partner-preview",
+      "android": { "buildType": "apk" },
+      "env": { "EXPO_PUBLIC_API_URL": "https://leadflow-crm-lo0w.onrender.com/api" }
+    },
+    "partner-production": {
+      "extends": "partner-base",
+      "autoIncrement": true,
+      "channel": "partner-production",
+      "android": { "buildType": "apk" },
+      "env": { "EXPO_PUBLIC_API_URL": "https://leadflow-crm-lo0w.onrender.com/api" }
+    },
+    "partner-store": {
+      "extends": "partner-production",
+      "android": { "buildType": "app-bundle" }
+    },
+
+    "admin-dev": { "extends": "admin-base", "developmentClient": true, "distribution": "internal", "channel": "admin-dev" },
+    "admin-preview": {
+      "extends": "admin-base",
+      "distribution": "internal",
+      "channel": "admin-preview",
+      "android": { "buildType": "apk" },
+      "env": { "EXPO_PUBLIC_API_URL": "https://leadflow-crm-lo0w.onrender.com/api" }
+    },
+    "admin-production": {
+      "extends": "admin-base",
+      "autoIncrement": true,
+      "channel": "admin-production",
+      "android": { "buildType": "apk" },
+      "env": { "EXPO_PUBLIC_API_URL": "https://leadflow-crm-lo0w.onrender.com/api" }
+    },
+    "admin-store": {
+      "extends": "admin-production",
+      "android": { "buildType": "app-bundle" }
+    }
+  },
+  "submit": { "partner-store": {}, "admin-store": {} }
+}

@@ -502,7 +502,7 @@ export default function BusinessDashboardPage() {
       </div>
 
       {/* 4. MAIN DASHBOARD SPLIT VIEW */}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(350px,0.85fr)]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(350px,0.85fr)] items-start">
         {/* LEFT COLUMN: Pipeline & Recent Leads */}
         <div className="space-y-6">
           {/* Conversion Pipeline */}
@@ -570,7 +570,7 @@ export default function BusinessDashboardPage() {
             </div>
 
             {/* Mobile Cards */}
-            <div className="block lg:hidden divide-y divide-slate-100">
+            <div className="block lg:hidden divide-y divide-slate-100 max-h-[480px] overflow-y-auto">
               {recentLeads.map((lead) => (
                 <div key={lead._id} className="p-3.5 sm:p-4 space-y-2.5 bg-white">
                   <div className="flex items-start justify-between gap-2">
@@ -623,7 +623,7 @@ export default function BusinessDashboardPage() {
             </div>
 
             {/* Desktop Table View */}
-            <div className="hidden lg:block overflow-x-auto">
+            <div className="hidden lg:block overflow-x-auto max-h-[560px] overflow-y-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-100">
                   <tr>
@@ -827,7 +827,7 @@ export default function BusinessDashboardPage() {
                 </div>
               </div>
 
-              {currentProject?.stage !== "UPCOMING" && (
+              {isAdmin && currentProject?.stage !== "UPCOMING" && (
                 <button
                   onClick={() => setUploadOpen(true)}
                   className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition"

@@ -5,7 +5,6 @@ import { Lead } from "../models/Lead";
 import bcrypt from "bcryptjs";
 import { User } from "../models/User";
 import { auth, roles } from "../middleware/auth";
-import { logAudit } from "../utils/activity";
 import { containsRegex, exactRegex } from "../utils/regex";
 import { getUserBusinessIds } from "../utils/tenant";
 import { validateBody, z } from "../middleware/validate";
@@ -27,7 +26,11 @@ function isAdmin(req: any) {
 r.get("/", auth, async (req, res) => {
   const filter: Record<string, unknown> = {};
 
-  const { search = "", status = "ALL", page = "1", limit = "20" } = req.query as Record<string, string>;
+  const { search = "", status = "ALL", page = "1", limit = "20", state, city, area } = req.query as Record<string, string>;
+
+  if (state) filter.state = state;
+  if (city) filter.city = city;
+  if (area) filter.area = area;
 
   if (req.user?.role === "BUSINESS") {
     filter.isActive = true;
@@ -61,6 +64,9 @@ r.get("/", auth, async (req, res) => {
       { name: containsRegex(querySearch) },
       { detail: containsRegex(querySearch) },
       { contactNo: containsRegex(querySearch) },
+      { city: containsRegex(querySearch) },
+      { area: containsRegex(querySearch) },
+      { pincode: containsRegex(querySearch) },
     ];
   }
 
@@ -142,7 +148,7 @@ r.get("/", auth, async (req, res) => {
  * Create a new business group.
  */
 r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
-  const { name, detail, contactNo, leadLimit, leadLimitType, adminEmail, adminPassword, adminName } = req.body;
+  const { name, detail, state = "Gujarat", city, area, pincode, contactNo, leadLimit, leadLimitType, adminEmail, adminPassword, adminName } = req.body;
 
   if (!name || !String(name).trim()) {
     return res.status(400).json({ message: "Business name is required." });
@@ -160,6 +166,10 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const business = await Business.create({
     name: String(name).trim(),
     detail: detail ? String(detail).trim() : "",
+    state: state ? String(state).trim() : "Gujarat",
+    city: city ? String(city).trim() : undefined,
+    area: area ? String(area).trim() : "",
+    pincode: pincode ? String(pincode).trim() : "",
     contactNo: contactNo ? String(contactNo).trim() : "",
     leadLimit: Math.max(0, Number(leadLimit) || 0),
     leadLimitType: ["DAILY", "MONTHLY", "NONE"].includes(leadLimitType)
@@ -168,13 +178,6 @@ r.post("/", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     createdBy: req.user!.id,
   });
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_CREATED",
-    entity: "Business",
-    entityId: business.id,
-    after: business.toObject(),
-  });
 
   let createdAdminUser: any = null;
   if (adminEmail && String(adminEmail).trim() && adminPassword) {
@@ -281,7 +284,8 @@ r.get("/:id", auth, async (req, res) => {
  * Update business details or limits.
  * Toggling active/inactive holds or releases leads for this business.
  */
-r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) => {
+// Business details are maintained by the LeadFlow admin team; owners have read-only access.
+r.patch("/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   const business = await Business.findById(req.params.id);
 
   if (!business) {
@@ -296,8 +300,7 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) =>
     return res.status(403).json({ message: "Access denied." });
   }
 
-  const before = business.toObject();
-  const { name, detail, contactNo, leadLimit, leadLimitType, isActive } = req.body;
+  const { name, detail, state, city, area, pincode, contactNo, leadLimit, leadLimitType, isActive } = req.body;
 
   if (name !== undefined) {
     if (!String(name).trim()) {
@@ -307,6 +310,10 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) =>
   }
 
   if (detail !== undefined) business.detail = String(detail).trim();
+  if (state !== undefined) business.state = String(state).trim();
+  if (city !== undefined) business.city = city ? (String(city).trim() as any) : undefined;
+  if (area !== undefined) business.area = String(area).trim();
+  if (pincode !== undefined) business.pincode = String(pincode).trim();
   if (contactNo !== undefined) business.contactNo = String(contactNo).trim();
 
   // Only admin can change lead limits or active status
@@ -329,14 +336,6 @@ r.patch("/:id", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, res) =>
 
   await business.save();
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_UPDATED",
-    entity: "Business",
-    entityId: business.id,
-    before,
-    after: business.toObject(),
-  });
 
   // If status changed to inactive -> hold leads; if changed to active -> release held leads
   const io = req.app.get("io");
@@ -370,14 +369,6 @@ r.delete("/:id", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
   business.isActive = false;
   await business.save();
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_DEACTIVATED",
-    entity: "Business",
-    entityId: business.id,
-    before: { isActive: true },
-    after: { isActive: false },
-  });
 
   const io = req.app.get("io");
   const holdResult = await holdBusinessLeads(business._id, io);
@@ -441,13 +432,6 @@ r.post("/:id/admin-user", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     });
   }
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_ADMIN_CONFIGURED",
-    entity: "Business",
-    entityId: business.id,
-    after: { userId: adminUser.id, email: adminUser.email },
-  });
 
   res.json({
     businessAdmin: {
@@ -488,12 +472,6 @@ r.patch("/:id/admin-password", auth, roles("ADMIN", "MANAGER", "BUSINESS"), asyn
   adminUser.passwordHash = await bcrypt.hash(password, 12);
   await adminUser.save();
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_ADMIN_PASSWORD_CHANGED",
-    entity: "User",
-    entityId: adminUser.id,
-  });
 
   res.json({ message: "Business admin password updated successfully." });
 });
@@ -524,14 +502,13 @@ const settingsSchema = z.object({
   assignmentStrategy: z.enum(["LEAST_LOADED", "ROUND_ROBIN"]).optional(),
 });
 
-r.patch("/:id/settings", auth, roles("ADMIN", "MANAGER", "BUSINESS"), validateBody(settingsSchema), async (req, res) => {
+r.patch("/:id/settings", auth, roles("ADMIN", "MANAGER"), validateBody(settingsSchema), async (req, res) => {
   if (!canManageBusiness(req, String(req.params.id))) {
     return res.status(403).json({ message: "Access denied." });
   }
   const business = await Business.findById(req.params.id);
   if (!business) return res.status(404).json({ message: "Business not found." });
 
-  const before = { ...((business.toObject() as any).settings || {}) };
   const current = (business as any).settings || {};
   for (const [key, value] of Object.entries(req.body)) {
     if (value !== undefined) current[key] = value;
@@ -540,15 +517,6 @@ r.patch("/:id/settings", auth, roles("ADMIN", "MANAGER", "BUSINESS"), validateBo
   business.markModified("settings");
   await business.save();
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "BUSINESS_SETTINGS_UPDATED",
-    entity: "Business",
-    entityId: business.id,
-    before,
-    after: req.body,
-    ip: req.ip,
-  });
   res.json({ settings: (business.toObject() as any).settings });
 });
 

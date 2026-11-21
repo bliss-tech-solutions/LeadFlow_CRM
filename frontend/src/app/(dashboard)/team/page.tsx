@@ -96,7 +96,7 @@ export default function Team() {
   }, [page, q, statusFilter]);
 
   async function impersonate(user: any) {
-    if (!window.confirm(`View the CRM as ${user.name}? You'll see exactly what they see for 30 minutes. This is recorded in the audit log.`)) return;
+    if (!window.confirm(`View the CRM as ${user.name}? You'll see exactly what they see for 30 minutes.`)) return;
     try {
       const r = await api(`/admin/impersonate/${user._id}`, { method: "POST" });
       localStorage.setItem(
@@ -499,7 +499,7 @@ export default function Team() {
                           <button
                             type="button"
                             onClick={() => impersonate(u)}
-                            title="View the CRM as this user (30 minutes, audited)"
+                            title="View the CRM as this user (30 minutes)"
                             className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
                           >
                             <Eye size={12} /> View as

@@ -7,8 +7,9 @@ import { auth, roles, signUserToken, isAdminRole } from "../middleware/auth";
 import { containsRegex } from "../utils/regex";
 import { invalidateUser } from "../utils/userCache";
 import { disconnectUserSockets } from "../sockets";
+import { revokeUserSessions } from "../models/Session";
+import { PushToken } from "../models/PushToken";
 import { Notification } from "../models/Notification";
-import { logAudit } from "../utils/activity";
 import { Lead } from "../models/Lead";
 import crypto from "crypto";
 import { createDocumentUploadUrl, createPublicObjectUrl, deleteDocumentObject } from "../services/s3.service";
@@ -375,10 +376,6 @@ r.patch("/:id/capacity", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
       .json({ message: "Daily lead limit must be between 0 and 1000" });
   }
 
-  const before = await User.findOne({ _id: req.params.id, role: "SALES" }).select(
-    "name email dailyLeadLimit",
-  );
-
   const user = await User.findOneAndUpdate(
     { _id: req.params.id, role: "SALES" },
     { $set: { dailyLeadLimit: Math.floor(limit) } },
@@ -396,15 +393,6 @@ r.patch("/:id/capacity", auth, roles("ADMIN", "MANAGER"), async (req, res) => {
     entityId: user.id,
   });
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "DAILY_LEAD_LIMIT_CHANGED",
-    entity: "User",
-    entityId: user.id,
-    before: { dailyLeadLimit: before?.dailyLeadLimit },
-    after: { dailyLeadLimit: user.dailyLeadLimit },
-    ip: req.ip,
-  });
 
   const io = req.app.get("io");
   if (io) {
@@ -456,16 +444,11 @@ r.patch("/:id/status", auth, roles("ADMIN", "MANAGER", "BUSINESS"), async (req, 
   ).select("-passwordHash -tokenVersion");
 
   invalidateUser(String(req.params.id));
+  if (!isActive) {
+    await revokeUserSessions(String(req.params.id), "blocked");
+    await PushToken.updateMany({ user: req.params.id }, { $set: { isActive: false } });
+  }
 
-  await logAudit({
-    actor: req.user!.id,
-    action: isActive ? "USER_UNBLOCKED" : "USER_BLOCKED",
-    entity: "User",
-    entityId: user!.id,
-    before: { isActive: before.isActive },
-    after: { isActive: user!.isActive },
-    ip: req.ip,
-  });
 
   const io = req.app.get("io");
   if (io) {
@@ -564,7 +547,6 @@ r.patch("/me", auth, async (req, res) => {
   if (!name) return res.status(400).json({ message: "Name is required" });
   if (name.length > 100) return res.status(400).json({ message: "Name is too long" });
 
-  const before = await User.findById(req.user!.id).select("name email");
   const user = await User.findByIdAndUpdate(
     req.user!.id,
     { $set: { name } },
@@ -573,15 +555,6 @@ r.patch("/me", auth, async (req, res) => {
 
   if (!user) return res.status(404).json({ message: "User not found" });
 
-  await logAudit({
-    actor: req.user!.id,
-    action: "PROFILE_UPDATED",
-    entity: "User",
-    entityId: user.id,
-    before: before?.toObject(),
-    after: { name: user.name, email: user.email },
-    ip: req.ip,
-  });
 
   invalidateUser(user.id);
   const fresh = await User.findById(user.id).select("tokenVersion business assignedProjects businessProject").lean();

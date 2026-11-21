@@ -4,7 +4,7 @@ export interface IPushToken extends Document {
   user: Types.ObjectId;
   token: string;
   platform: "ios" | "android" | "web";
-  app: "ADMIN" | "SALES" | "ALL";
+  app: "ADMIN" | "PARTNER" | "SALES" | "ALL";
   deviceName?: string;
   isActive: boolean;
   lastUsedAt: Date;
@@ -32,7 +32,7 @@ const schema = new Schema<IPushToken>(
     },
     app: {
       type: String,
-      enum: ["ADMIN", "SALES", "ALL"],
+      enum: ["ADMIN", "PARTNER", "SALES", "ALL"],
       default: "ALL",
     },
     deviceName: {

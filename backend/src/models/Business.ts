@@ -1,7 +1,12 @@
 import { Schema, model, Document, Types } from "mongoose";
+import type { City } from "../config/cities";
 
 export interface IBusiness extends Document {
   name: string;
+  state?: string;
+  city?: City;
+  area?: string;
+  pincode?: string;
   detail?: string;
   contactNo?: string;
   leadLimit: number; // 0 = unlimited
@@ -32,6 +37,10 @@ const schema = new Schema<IBusiness>(
       trim: true,
       index: true,
     },
+    state: { type: String, default: "Gujarat", index: true },
+    city: { type: String, index: true },
+    area: { type: String, default: "", index: true },
+    pincode: { type: String, default: "" },
     detail: {
       type: String,
       default: "",

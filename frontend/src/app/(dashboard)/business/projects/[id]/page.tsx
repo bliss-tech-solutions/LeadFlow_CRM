@@ -23,6 +23,7 @@ import {
   AlertCircle,
   Sparkles,
 } from "lucide-react";
+import LocationPicker from "../../../../../components/LocationPicker";
 
 // Realistic Price Range Presets (No manual price typing)
 const PRODUCT_PRICE_RANGES: Record<string, string[]> = {
@@ -142,6 +143,11 @@ export default function BusinessProjectDetailPage() {
   const [editForm, setEditForm] = useState({
     name: "",
     stage: "ONGOING" as "ONGOING" | "UPCOMING" | "COMPLETED",
+    state: "Gujarat",
+    city: "Vadodara",
+    area: "",
+    customArea: "",
+    pincode: "",
     location: "",
     hasRera: false,
     reraNumber: "",
@@ -185,6 +191,11 @@ export default function BusinessProjectDetailPage() {
     setEditForm({
       name: project.name || "",
       stage: project.stage || "ONGOING",
+      state: project.state || "Gujarat",
+      city: project.city || "Vadodara",
+      area: project.area || "",
+      customArea: "",
+      pincode: project.pincode || "",
       location: project.location || "",
       hasRera: hasReraInit,
       reraNumber: project.reraNumber || "",
@@ -273,8 +284,11 @@ export default function BusinessProjectDetailPage() {
       setEditError("Project name is required.");
       return;
     }
-    if (!editForm.location.trim()) {
-      setEditError("Location is required.");
+
+    const effectiveArea = editForm.area === "Other" ? editForm.customArea.trim() : editForm.area.trim();
+    const calculatedLocation = editForm.location.trim() || [effectiveArea, editForm.city, editForm.state, editForm.pincode].filter(Boolean).join(", ");
+    if (!calculatedLocation) {
+      setEditError("Location or area is required.");
       return;
     }
 
@@ -314,7 +328,11 @@ export default function BusinessProjectDetailPage() {
         body: JSON.stringify({
           name: editForm.name.trim(),
           stage: editForm.stage,
-          location: editForm.location.trim(),
+          state: editForm.state || "Gujarat",
+          city: editForm.city || undefined,
+          area: effectiveArea,
+          pincode: editForm.pincode.trim(),
+          location: calculatedLocation,
           hasRera: hasReraEffective,
           reraNumber: hasReraEffective ? editForm.reraNumber.trim() : undefined,
           penthouse: editForm.penthouse || editForm.products.some((p) => p.isPenthouse),
@@ -480,7 +498,11 @@ export default function BusinessProjectDetailPage() {
               </div>
               <p className="mt-1 text-xs text-slate-500 font-medium flex items-center gap-1.5">
                 <MapPin size={13} className="text-slate-400" />
-                <span>{project.location || "Location not specified"}</span>
+                <span>
+                  {project.location ||
+                    [project.area, project.city, project.state, project.pincode].filter(Boolean).join(", ") ||
+                    "Location not specified"}
+                </span>
                 <span>·</span>
                 <span>Part of {businessName}</span>
               </p>
@@ -500,7 +522,7 @@ export default function BusinessProjectDetailPage() {
         </div>
 
         {/* Info Grid */}
-        <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="rounded-xl bg-white border border-slate-100 p-3 shadow-xs">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
               RERA Registration
@@ -529,62 +551,95 @@ export default function BusinessProjectDetailPage() {
               {project.metaSources?.length || 0} active sources
             </b>
           </div>
+
+          <div className="rounded-xl bg-white border border-slate-100 p-3 shadow-xs">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Documents Vault
+            </span>
+            <b className="mt-1 block text-xs font-bold text-slate-800">
+              {project.documents?.length || 0} uploaded files
+            </b>
+          </div>
         </div>
       </section>
 
-      {/* Product Configurations */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">
-              Product Unit Inventory ({project.products?.length || 0})
-            </h3>
-            <p className="text-xs text-slate-500">
-              Configured unit types and realistic price range brackets.
-            </p>
+      {/* Product Configurations - Responsive Grid across screen sizes */}
+      <section className="rounded-2xl border border-slate-200/80 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
+              <Layers size={17} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Product Unit Inventory
+                </h3>
+                <span className="rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                  {project.products?.length || 0} configured
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Configured unit types, area specifications, and realistic price brackets.
+              </p>
+            </div>
           </div>
         </div>
 
         {project.stage === "UPCOMING" ? (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-xs text-slate-400">
-            Upcoming project: Product inventories are configured when moving to Ongoing or Completed stage.
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-8 text-center">
+            <Layers size={24} className="mx-auto text-slate-300 mb-2" />
+            <p className="text-xs font-bold text-slate-700">Upcoming Project Stage</p>
+            <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
+              Product inventory is kept disabled for Upcoming projects and will unlock when moved to Ongoing or Completed stage.
+            </p>
           </div>
         ) : project.products?.length > 0 ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {project.products.map((prod: any, idx: number) => (
               <div
                 key={idx}
-                className="rounded-xl border border-slate-200/80 bg-slate-50/40 p-4 space-y-2.5 shadow-xs"
+                className="group relative flex flex-col justify-between rounded-xl border border-slate-200/80 bg-gradient-to-b from-slate-50/40 via-white to-white p-4 shadow-2xs hover:border-indigo-200 hover:shadow-xs transition-all"
               >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <b className="block text-xs font-bold text-slate-900">
-                        {prod.customType || prod.type.replace(/_/g, " ")}
-                      </b>
-                      {prod.isPenthouse && (
-                        <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-extrabold text-purple-700">
-                          👑 Penthouse
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="block text-xs font-bold text-slate-900 truncate">
+                          {prod.customType || prod.type.replace(/_/g, " ")}
                         </span>
-                      )}
+                        {prod.isPenthouse && (
+                          <span className="rounded-full bg-purple-100 border border-purple-200 px-1.5 py-0.2 text-[9px] font-extrabold text-purple-700">
+                            👑 Penthouse
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">
+                        Unit Spec
+                      </span>
                     </div>
-                    <span className="text-[10px] text-slate-400 uppercase font-semibold">Unit Configuration</span>
                   </div>
-                  <span className="rounded-lg bg-indigo-50 border border-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-700">
-                    {prod.priceRange || "Price on request"}
-                  </span>
+
+                  <div className="rounded-lg bg-indigo-50/70 border border-indigo-100/80 px-2.5 py-1.5">
+                    <span className="block text-[10px] uppercase font-bold text-indigo-400">
+                      Price Bracket
+                    </span>
+                    <span className="block text-xs font-bold text-indigo-700 truncate">
+                      {prod.priceRange || "Price on request"}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/60 text-xs">
-                  <div className="rounded-lg bg-white p-2 border border-slate-100">
-                    <span className="block text-[10px] uppercase font-bold text-slate-400">Area</span>
-                    <strong className="block text-slate-800 font-semibold truncate">
+                <div className="mt-3 grid grid-cols-2 gap-2 pt-2.5 border-t border-slate-100 text-xs">
+                  <div className="rounded-lg bg-slate-50/80 p-2 border border-slate-100">
+                    <span className="block text-[9px] uppercase font-bold text-slate-400">Area</span>
+                    <strong className="block text-slate-800 font-semibold truncate text-[11px]">
                       {prod.areaSqFt ? `${prod.areaSqFt} sq.ft` : "—"}
                     </strong>
                   </div>
-                  <div className="rounded-lg bg-white p-2 border border-slate-100">
-                    <span className="block text-[10px] uppercase font-bold text-slate-400">Units</span>
-                    <strong className="block text-slate-800 font-semibold truncate">
+                  <div className="rounded-lg bg-slate-50/80 p-2 border border-slate-100">
+                    <span className="block text-[9px] uppercase font-bold text-slate-400">Total Units</span>
+                    <strong className="block text-slate-800 font-semibold truncate text-[11px]">
                       {prod.units ? `${prod.units} units` : "—"}
                     </strong>
                   </div>
@@ -593,175 +648,225 @@ export default function BusinessProjectDetailPage() {
             ))}
           </div>
         ) : (
-          <p className="text-xs text-slate-400">No products configured yet.</p>
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center">
+            <Layers size={22} className="mx-auto text-slate-300 mb-2" />
+            <p className="text-xs font-semibold text-slate-500">No products configured yet.</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Click "Edit Project Details" above to add product configurations.</p>
+          </div>
         )}
       </section>
 
-      {/* Meta Lead Sync Mappings */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-              <Database size={16} className="text-indigo-600" />
-              <span>Meta Lead Sync Mappings ({project.metaSources?.length || 0})</span>
-            </h3>
-            <p className="text-xs text-slate-500">
-              Incoming webhook leads matching these Page and Form details are automatically mapped to this project.
-            </p>
-          </div>
-        </div>
-
-        {project.metaSources?.length > 0 ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {project.metaSources.map((ms: any, idx: number) => (
-              <div
-                key={idx}
-                className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 space-y-2"
-              >
-                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                  <span className="text-[10px] font-bold uppercase text-slate-400">
-                    Source #{idx + 1}
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600">
-                    <CheckCircle2 size={11} /> Active Mapping
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="block text-[10px] uppercase font-bold text-slate-400">
-                      Page Name
-                    </span>
-                    <strong className="block truncate text-slate-800">
-                      {ms.pageName || "—"}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="block text-[10px] uppercase font-bold text-slate-400">
-                      Page ID
-                    </span>
-                    <span className="block truncate text-slate-600 font-mono text-[11px]">
-                      {ms.pageId || "—"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="block text-[10px] uppercase font-bold text-slate-400">
-                      Form Name
-                    </span>
-                    <strong className="block truncate text-slate-800">
-                      {ms.formName || "—"}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="block text-[10px] uppercase font-bold text-slate-400">
-                      Form ID
-                    </span>
-                    <span className="block truncate text-slate-600 font-mono text-[11px]">
-                      {ms.formId || "—"}
-                    </span>
-                  </div>
-                </div>
+      {/* 2-Column Responsive Section: Left = Meta Sync Mappings, Right = Document Vault */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* LEFT COLUMN: Meta Lead Sync Mappings */}
+        <section className="rounded-2xl border border-slate-200/80 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
+                <Database size={17} />
               </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-slate-400">No Meta mappings configured.</p>
-        )}
-      </section>
-
-      {/* Document Repository */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">
-              Project Documents ({project.documents?.length || 0})
-            </h3>
-            <p className="text-xs text-slate-500">
-              Brochures, price sheets, floor plans, and amenities stored on AWS S3.
-            </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Meta Lead Sync Mappings
+                  </h3>
+                  <span className="rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                    {project.metaSources?.length || 0}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Incoming webhook leads matching these Page and Form details are automatically mapped to this project.
+                </p>
+              </div>
+            </div>
           </div>
 
-          {project.stage !== "UPCOMING" && (
-            <div className="flex items-center gap-2">
-              <select
-                value={uploadCategory}
-                onChange={(e) => setUploadCategory(e.target.value)}
-                className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
-              >
-                {documentCategories.map(([val, label]) => (
-                  <option key={val} value={val}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+          {project.metaSources?.length > 0 ? (
+            <div className="space-y-3">
+              {project.metaSources.map((ms: any, idx: number) => (
+                <div
+                  key={idx}
+                  className="rounded-xl border border-slate-200/80 bg-slate-50/40 p-4 space-y-2.5 shadow-2xs hover:border-indigo-200 transition-all"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Source #{idx + 1}
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                      <CheckCircle2 size={11} className="text-emerald-600" />
+                      <span>Active Mapping</span>
+                    </span>
+                  </div>
 
-              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700">
-                <Upload size={13} />
-                <span>{uploadingDoc ? "Uploading..." : "Upload Document"}</span>
-                <input
-                  type="file"
-                  disabled={uploadingDoc}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void handleUploadDocument(file);
-                  }}
-                  className="hidden"
-                />
-              </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="rounded-lg bg-white p-2.5 border border-slate-100 space-y-1">
+                      <span className="block text-[10px] uppercase font-bold text-slate-400">
+                        Page Name
+                      </span>
+                      <strong className="block truncate text-slate-900 font-semibold">
+                        {ms.pageName || "—"}
+                      </strong>
+                      <div className="pt-1">
+                        <span className="block text-[9px] uppercase font-bold text-slate-400">Page ID</span>
+                        <span className="block truncate text-slate-600 font-mono text-[11px] bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
+                          {ms.pageId || "—"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg bg-white p-2.5 border border-slate-100 space-y-1">
+                      <span className="block text-[10px] uppercase font-bold text-slate-400">
+                        Form Name
+                      </span>
+                      <strong className="block truncate text-slate-900 font-semibold">
+                        {ms.formName || "—"}
+                      </strong>
+                      <div className="pt-1">
+                        <span className="block text-[9px] uppercase font-bold text-slate-400">Form ID</span>
+                        <span className="block truncate text-slate-600 font-mono text-[11px] bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
+                          {ms.formId || "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center">
+              <Database size={22} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-xs font-semibold text-slate-500">No Meta mappings configured</p>
+              <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                Incoming webhook leads without mapped Page/Form IDs will default to the business general pool.
+              </p>
             </div>
           )}
-        </div>
+        </section>
 
-        {docError && (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
-            {docError}
-          </div>
-        )}
+        {/* RIGHT COLUMN: Project Document Repository */}
+        <section className="rounded-2xl border border-slate-200/80 bg-white p-5 sm:p-6 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
+                <FileText size={17} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Project Documents
+                  </h3>
+                  <span className="rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                    {project.documents?.length || 0}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Brochures, price sheets, floor plans, and amenities on AWS S3.
+                </p>
+              </div>
+            </div>
 
-        {project.stage === "UPCOMING" ? (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-xs text-slate-400">
-            Documents are disabled for Upcoming projects until transitioned to Ongoing or Completed.
+            {isAdmin && project.stage !== "UPCOMING" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={uploadCategory}
+                  onChange={(e) => setUploadCategory(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:border-indigo-500 shadow-2xs"
+                >
+                  {documentCategories.map(([val, label]) => (
+                    <option key={val} value={val}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 active:scale-[0.98] transition-all">
+                  <Upload size={13} />
+                  <span>{uploadingDoc ? "Uploading..." : "Upload"}</span>
+                  <input
+                    type="file"
+                    disabled={uploadingDoc}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleUploadDocument(file);
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            )}
           </div>
-        ) : project.documents?.length > 0 ? (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {project.documents.map((doc: any) => (
-              <div
-                key={doc._id}
-                className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-3.5 shadow-xs"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <FileText size={18} className="text-indigo-600 shrink-0" />
-                  <div className="min-w-0">
-                    <span className="block truncate text-xs font-bold text-slate-900">
-                      {doc.name}
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      {doc.category} · {doc.size ? `${(doc.size / 1024).toFixed(1)} KB` : "Uploaded"}
-                    </span>
+
+          {docError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-medium text-rose-700">
+              {docError}
+            </div>
+          )}
+
+          {project.stage === "UPCOMING" ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-8 text-center">
+              <FileText size={24} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-xs font-bold text-slate-700">Documents Disabled</p>
+              <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                Document repository is disabled for Upcoming projects until transitioned to Ongoing or Completed stage.
+              </p>
+            </div>
+          ) : project.documents?.length > 0 ? (
+            <div className="space-y-2.5">
+              {project.documents.map((doc: any) => (
+                <div
+                  key={doc._id}
+                  className="flex items-center justify-between rounded-xl border border-slate-200/80 bg-white p-3 shadow-2xs hover:border-indigo-200 transition-all gap-2"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
+                      <FileText size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block truncate text-xs font-bold text-slate-900">
+                        {doc.name}
+                      </span>
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                        <span className="font-semibold uppercase tracking-wider text-slate-500">
+                          {doc.category?.replace(/_/g, " ")}
+                        </span>
+                        <span>·</span>
+                        <span>{doc.size ? `${(doc.size / 1024).toFixed(1)} KB` : "Uploaded"}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => handleOpenDocument(doc)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50/50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+                    >
+                      <ExternalLink size={12} />
+                      <span>Open</span>
+                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleDeleteDocument(doc._id)}
+                        title="Delete document"
+                        className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => handleOpenDocument(doc)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    <ExternalLink size={12} /> Open
-                  </button>
-                  <button
-                    onClick={() => handleDeleteDocument(doc._id)}
-                    className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-slate-400">No documents uploaded yet.</p>
-        )}
-      </section>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-8 text-center">
+              <FileText size={22} className="mx-auto text-slate-300 mb-2" />
+              <p className="text-xs font-semibold text-slate-500">No documents uploaded yet</p>
+              <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                Upload brochures, price sheets, or floor plans to share with your sales staff.
+              </p>
+            </div>
+          )}
+        </section>
+      </div>
 
       {/* ADMIN EDIT PROJECT MODAL */}
       {openEditModal && (
@@ -820,36 +925,43 @@ export default function BusinessProjectDetailPage() {
                 </div>
               </div>
 
-              {/* Name & Location */}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Project Name <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={editForm.name}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({ ...prev, name: e.target.value }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-800 focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Location / Area <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={editForm.location}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({ ...prev, location: e.target.value }))
-                    }
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-800 focus:border-indigo-500"
-                  />
-                </div>
+              {/* Name */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Project Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editForm.name}
+                  onChange={(e) =>
+                    setEditForm((prev) => ({ ...prev, name: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs text-slate-800 focus:border-indigo-500"
+                />
               </div>
+
+              {/* Location Picker (State, City, Predefined Area, Pincode) */}
+              <LocationPicker
+                state={editForm.state}
+                city={editForm.city}
+                area={editForm.area}
+                customArea={editForm.customArea}
+                pincode={editForm.pincode}
+                onChange={(patch) =>
+                  setEditForm((prev) => ({
+                    ...prev,
+                    ...patch,
+                    location: [
+                      patch.area !== undefined ? (patch.area === "Other" ? patch.customArea ?? prev.customArea : patch.area) : (prev.area === "Other" ? prev.customArea : prev.area),
+                      patch.city ?? prev.city,
+                      patch.state ?? prev.state,
+                      patch.pincode ?? prev.pincode,
+                    ]
+                      .filter(Boolean)
+                      .join(", "),
+                  }))
+                }
+              />
 
               {/* Upcoming Notice */}
               {editForm.stage === "UPCOMING" && (

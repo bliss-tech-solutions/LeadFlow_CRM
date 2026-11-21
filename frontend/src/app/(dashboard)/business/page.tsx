@@ -26,12 +26,19 @@ import {
   Users,
   Calendar,
   Sparkles,
+  MapPin,
 } from "lucide-react";
+import LocationPicker from "../../../components/LocationPicker";
+import { GUJARAT_CITIES, getAreasForCity } from "../../../lib/locations";
 
 interface BusinessItem {
   _id: string;
   name: string;
   detail?: string;
+  state?: string;
+  city?: string;
+  area?: string;
+  pincode?: string;
   contactNo?: string;
   leadLimit?: number;
   leadLimitType?: "DAILY" | "MONTHLY" | "NONE";
@@ -68,6 +75,8 @@ export default function BusinessPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [cityFilter, setCityFilter] = useState("");
+  const [areaFilter, setAreaFilter] = useState("");
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ total: 0, pages: 1 });
 
@@ -76,6 +85,11 @@ export default function BusinessPage() {
   const [addForm, setAddForm] = useState({
     name: "",
     detail: "",
+    state: "Gujarat",
+    city: "Vadodara",
+    area: "",
+    customArea: "",
+    pincode: "",
     contactNo: "",
     leadLimit: "0",
     leadLimitType: "NONE" as "DAILY" | "MONTHLY" | "NONE",
@@ -92,6 +106,11 @@ export default function BusinessPage() {
   const [editForm, setEditForm] = useState({
     name: "",
     detail: "",
+    state: "Gujarat",
+    city: "Vadodara",
+    area: "",
+    customArea: "",
+    pincode: "",
     contactNo: "",
     leadLimit: "0",
     leadLimitType: "NONE" as "DAILY" | "MONTHLY" | "NONE",
@@ -118,7 +137,7 @@ export default function BusinessPage() {
   const [passwordError, setPasswordError] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState("");
 
-  async function loadBusinesses(p = page, q = search, s = statusFilter) {
+  async function loadBusinesses(p = page, q = search, s = statusFilter, city = cityFilter, area = areaFilter) {
     try {
       setLoading(true);
       setError("");
@@ -129,6 +148,8 @@ export default function BusinessPage() {
       if (q.trim()) params.set("search", q.trim());
       if (s && s !== "ALL") params.set("status", s);
       else params.set("status", "ALL");
+      if (city) params.set("city", city);
+      if (area) params.set("area", area);
 
       const data = await api(`/businesses?${params.toString()}`);
       setBusinesses(data.businesses || []);
@@ -147,10 +168,10 @@ export default function BusinessPage() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void loadBusinesses(page, search, statusFilter);
+      void loadBusinesses(page, search, statusFilter, cityFilter, areaFilter);
     }, 300);
     return () => clearTimeout(timer);
-  }, [page, search, statusFilter]);
+  }, [page, search, statusFilter, cityFilter, areaFilter]);
 
   // Aggregate stats across loaded businesses
   const stats = useMemo(() => {
@@ -198,6 +219,7 @@ export default function BusinessPage() {
       }
     }
 
+    const effectiveArea = addForm.area === "Other" ? addForm.customArea.trim() : addForm.area.trim();
     try {
       setAddingBusiness(true);
       await api("/businesses", {
@@ -205,6 +227,10 @@ export default function BusinessPage() {
         body: JSON.stringify({
           name: addForm.name.trim(),
           detail: addForm.detail.trim(),
+          state: addForm.state || "Gujarat",
+          city: addForm.city || undefined,
+          area: effectiveArea,
+          pincode: addForm.pincode.trim(),
           contactNo: addForm.contactNo.trim(),
           leadLimit: Number(addForm.leadLimit) || 0,
           leadLimitType: addForm.leadLimitType,
@@ -218,6 +244,11 @@ export default function BusinessPage() {
       setAddForm({
         name: "",
         detail: "",
+        state: "Gujarat",
+        city: "Vadodara",
+        area: "",
+        customArea: "",
+        pincode: "",
         contactNo: "",
         leadLimit: "0",
         leadLimitType: "NONE",
@@ -240,6 +271,11 @@ export default function BusinessPage() {
     setEditForm({
       name: b.name || "",
       detail: b.detail || "",
+      state: b.state || "Gujarat",
+      city: b.city || "",
+      area: b.area || "",
+      customArea: "",
+      pincode: b.pincode || "",
       contactNo: b.contactNo || "",
       leadLimit: String(b.leadLimit || 0),
       leadLimitType: b.leadLimitType || "NONE",
@@ -256,6 +292,7 @@ export default function BusinessPage() {
       return;
     }
 
+    const effectiveArea = editForm.area === "Other" ? editForm.customArea.trim() : editForm.area.trim();
     try {
       setSavingEdit(true);
       await api(`/businesses/${editingBusiness._id}`, {
@@ -263,6 +300,10 @@ export default function BusinessPage() {
         body: JSON.stringify({
           name: editForm.name.trim(),
           detail: editForm.detail.trim(),
+          state: editForm.state || "Gujarat",
+          city: editForm.city || undefined,
+          area: effectiveArea,
+          pincode: editForm.pincode.trim(),
           contactNo: editForm.contactNo.trim(),
           leadLimit: Number(editForm.leadLimit) || 0,
           leadLimitType: editForm.leadLimitType,
@@ -271,7 +312,7 @@ export default function BusinessPage() {
       });
 
       setEditingBusiness(null);
-      await loadBusinesses(page, search, statusFilter);
+      await loadBusinesses(page, search, statusFilter, cityFilter, areaFilter);
     } catch (err: any) {
       setEditError(err?.message || "Failed to update business.");
     } finally {
@@ -479,6 +520,43 @@ export default function BusinessPage() {
               </button>
             ))}
           </div>
+
+          {/* City Filter (Gujarat Predefined) */}
+          <select
+            value={cityFilter}
+            onChange={(e) => {
+              setCityFilter(e.target.value);
+              setAreaFilter("");
+              setPage(1);
+            }}
+            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500"
+          >
+            <option value="">All Cities</option>
+            {GUJARAT_CITIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+
+          {/* Area Filter */}
+          {cityFilter && (
+            <select
+              value={areaFilter}
+              onChange={(e) => {
+                setAreaFilter(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-indigo-500"
+            >
+              <option value="">All Areas ({cityFilter})</option>
+              {getAreasForCity(cityFilter).map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Primary Add Business Button */}
@@ -560,6 +638,12 @@ export default function BusinessPage() {
                             {b.detail && (
                               <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">
                                 {b.detail}
+                              </p>
+                            )}
+                            {(b.area || b.city) && (
+                              <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500 font-medium">
+                                <MapPin size={11} className="text-slate-400" />
+                                <span>{[b.area, b.city, b.pincode].filter(Boolean).join(", ")}</span>
                               </p>
                             )}
                           </div>
@@ -941,6 +1025,16 @@ export default function BusinessPage() {
                 />
               </div>
 
+              {/* Location Picker (State, City, Predefined Area, Pincode) */}
+              <LocationPicker
+                state={addForm.state}
+                city={addForm.city}
+                area={addForm.area}
+                customArea={addForm.customArea}
+                pincode={addForm.pincode}
+                onChange={(patch) => setAddForm((prev) => ({ ...prev, ...patch }))}
+              />
+
               {/* Lead Quota Limit */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1121,6 +1215,7 @@ export default function BusinessPage() {
                 />
               </div>
 
+              {/* Contact Number */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Contact Number
@@ -1132,6 +1227,16 @@ export default function BusinessPage() {
                   className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-xs text-slate-800"
                 />
               </div>
+
+              {/* Location Picker (State, City, Predefined Area, Pincode) */}
+              <LocationPicker
+                state={editForm.state}
+                city={editForm.city}
+                area={editForm.area}
+                customArea={editForm.customArea}
+                pincode={editForm.pincode}
+                onChange={(patch) => setEditForm((prev) => ({ ...prev, ...patch }))}
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

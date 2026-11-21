@@ -1,4 +1,5 @@
 import { Schema, model, Types, Document } from "mongoose";
+import type { City } from "../config/cities";
 
 export type LeadStatus =
   | "NEW"
@@ -42,6 +43,7 @@ export interface ILead extends Document {
   business?: Types.ObjectId;
   dealValue?: number;
   lostReason?: string;
+  isFake?: boolean;
   tags: string[];
   whatsappOptOut: boolean;
   firstContactAt?: Date;
@@ -52,6 +54,8 @@ export interface ILead extends Document {
   lastWhatsAppAt?: Date;
   deliveryStatus: "RELEASED" | "HELD";
   heldUntil?: Date;
+  city?: City;
+  interestedProduct?: string;
   score: number;
   notes?: string;
   lastContactAt?: Date;
@@ -137,6 +141,7 @@ const schema = new Schema<ILead>(
     business: { type: Schema.Types.ObjectId, ref: "Business", index: true },
     dealValue: { type: Number, min: 0 },
     lostReason: String,
+    isFake: { type: Boolean, default: false, index: true },
     tags: { type: [String], default: [] },
     whatsappOptOut: { type: Boolean, default: false },
     firstContactAt: Date,
@@ -152,6 +157,8 @@ const schema = new Schema<ILead>(
       index: true,
     },
     heldUntil: Date,
+    city: { type: String, index: true },
+    interestedProduct: { type: String, index: true },
     score: { type: Number, default: 0 },
     notes: String,
     lastContactAt: Date,

@@ -42,4 +42,33 @@ const schema = new Schema<INotification>(
 
 schema.index({ user: 1, readAt: 1, createdAt: -1 });
 
+/*
+ * Every stored notification is also delivered as a phone push (respecting the
+ * user's preferences). Centralising it here means no code path can create an
+ * in-app notification and forget the push, or vice versa.
+ */
+function dispatchPush(docs: any[]) {
+  if (!docs.length) return;
+  // Lazy import avoids a circular dependency (push.service -> User model).
+  setImmediate(() => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { pushForNotifications } = require("../services/push.service") as typeof import("../services/push.service");
+      void pushForNotifications(docs.map((d) => (d.toObject ? d.toObject() : d))).catch(() => undefined);
+    } catch {
+      /* push is best-effort */
+    }
+  });
+}
+
+schema.pre("save", function () {
+  (this as any).$locals.wasNew = this.isNew;
+});
+schema.post("save", function (doc) {
+  if ((doc as any).$locals?.wasNew) dispatchPush([doc]);
+});
+schema.post("insertMany", function (docs: any[]) {
+  dispatchPush(Array.isArray(docs) ? docs : [docs]);
+});
+
 export const Notification = model<INotification>("Notification", schema);

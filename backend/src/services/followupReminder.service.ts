@@ -2,7 +2,6 @@ import { FollowUp } from "../models/FollowUp";
 import { Notification } from "../models/Notification";
 import { User } from "../models/User";
 import { logActivity } from "../utils/activity";
-import { sendPushNotification } from "./push.service";
 
 /**
  * Send a follow-up reminder once the appointment's exact 24-hour reminder time
@@ -64,6 +63,32 @@ export async function processFollowupReminders(io: any) {
     processed += 1;
   }
 
+  // Second, short reminder ~15 minutes before the appointment — only to the owner,
+  // so the salesperson's phone buzzes right before the call.
+  const soon = new Date(now.getTime() + 15 * 60 * 1000);
+  for (let i = 0; i < 200; i += 1) {
+    const due: any = await FollowUp.findOneAndUpdate(
+      { status: "PENDING", scheduledAt: { $gt: now, $lte: soon }, reminder15mSentAt: { $exists: false } },
+      { $set: { reminder15mSentAt: now } },
+      { new: true },
+    )
+      .populate("lead", "name phone")
+      .lean();
+    if (!due) break;
+    const leadId = String(due.lead?._id ?? due.lead);
+    const at = new Date(due.scheduledAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
+    await Notification.create({
+      user: due.user,
+      type: "FOLLOWUP_DUE_SOON",
+      title: `${String(due.type || "Follow-up").replace(/_/g, " ")} at ${at}`,
+      message: `${due.lead?.name || "Lead"}${due.lead?.phone ? ` · ${due.lead.phone}` : ""} — starting in 15 minutes.`,
+      entityType: "Lead",
+      entityId: leadId,
+    });
+    if (io) io.to(`user:${String(due.user)}`).emit("followup_reminder", { followUp: due, action: "DUE_SOON" });
+    processed += 1;
+  }
+
   return processed;
 }
 
@@ -89,13 +114,6 @@ async function sendReminder(io: any, followup: any) {
     })),
   );
 
-  // Send Push Notifications to assigned user and admins
-  void sendPushNotification(recipients.map(r => r._id), {
-    title: `Follow-up: ${leadName}`,
-    body: `${followup.type} scheduled for ${scheduled}`,
-    data: { leadId, followupId: String(followup._id), type: "FOLLOWUP_REMINDER" },
-    channelId: "followups",
-  }).catch(() => undefined);
 
   await logActivity({
     lead: leadId,

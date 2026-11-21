@@ -6,7 +6,6 @@ import Topbar from "../../../components/Topbar";
 import Pagination from "../../../components/Pagination";
 import Modal, { btn, field } from "../../../components/Modal";
 import StatusChangeModal from "../../../components/StatusChangeModal";
-import NewLeadModal from "../../../components/NewLeadModal";
 import ImportLeadsModal from "../../../components/ImportLeadsModal";
 import WhatsAppSendDrawer from "../../../components/WhatsAppSendDrawer";
 import WhatsAppIcon from "../../../components/WhatsAppIcon";
@@ -23,7 +22,6 @@ import {
   Loader2,
   UserRound,
   Sparkles,
-  Plus,
   FileUp,
   Phone,
   KanbanSquare,
@@ -99,8 +97,12 @@ type Filters = {
   dateFrom: string;
   dateTo: string;
   sort: string;
+  city: string;
+  product: string;
   quick: "" | "uncontacted" | "today" | "overdue" | "unassigned" | "hot";
 };
+
+const PRODUCT_TYPES = ["1BHK", "2BHK", "3BHK", "4BHK", "STUDIO", "PENTHOUSE", "COMMERCIAL_SHOP", "SHOWROOM", "OFFICE", "PLOT", "OTHER"];
 
 const emptyFilters: Filters = {
   search: "",
@@ -111,6 +113,8 @@ const emptyFilters: Filters = {
   dateFrom: "",
   dateTo: "",
   sort: "newest",
+  city: "",
+  product: "",
   quick: "",
 };
 
@@ -124,6 +128,8 @@ function toParams(f: Filters) {
   if (f.dateFrom) p.set("dateFrom", f.dateFrom);
   if (f.dateTo) p.set("dateTo", f.dateTo);
   if (f.sort && f.sort !== "newest") p.set("sort", f.sort);
+  if (f.city) p.set("city", f.city);
+  if (f.product) p.set("product", f.product);
   if (f.quick === "uncontacted") p.set("uncontacted", "true");
   if (f.quick === "today") p.set("followup", "today");
   if (f.quick === "overdue") p.set("followup", "overdue");
@@ -144,6 +150,8 @@ export default function Leads() {
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [salesUsers, setSalesUsers] = useState<any[]>([]);
   const [views, setViews] = useState<any[]>([]);
+  const [productOptions, setProductOptions] = useState<string[]>([]);
+  const [cityOptions, setCityOptions] = useState<string[]>([]);
 
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [page, setPage] = useState(1);
@@ -158,7 +166,6 @@ export default function Leads() {
   const [statusChange, setStatusChange] = useState<{ status: string; ids: string[] } | null>(null);
   const [tagOpen, setTagOpen] = useState(false);
   const [tagValue, setTagValue] = useState("");
-  const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [waLead, setWaLead] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -169,11 +176,18 @@ export default function Leads() {
   const setF = <K extends keyof Filters>(k: K, v: Filters[K]) => setFilters((f) => ({ ...f, [k]: v }));
 
   useEffect(() => {
-    api("/business-projects?limit=100").then((d) => setProjects(d.projects || [])).catch(() => {});
     api("/leads/views").then((d) => setViews(d.views || [])).catch(() => {});
+    api("/leads/product-options").then((d) => setProductOptions(d.products || [])).catch(() => {});
     if (isAdmin) api("/businesses?limit=100").then((d) => setBusinesses(d.businesses || [])).catch(() => {});
+    if (isAdmin) api("/meta-data/cities").then((d) => setCityOptions(d.cities || [])).catch(() => {});
     if (canManageTeam) api("/users?role=SALES&limit=100").then((d) => setSalesUsers(d.users || [])).catch(() => {});
   }, [isAdmin, canManageTeam]);
+
+  // Scoped to the chosen business so the list can't miss projects past the 100 cap.
+  useEffect(() => {
+    const qs = filters.business ? `?business=${filters.business}&limit=100` : "?limit=100";
+    api(`/business-projects${qs}`).then((d) => setProjects(d.projects || [])).catch(() => {});
+  }, [filters.business]);
 
   const load = useCallback(
     async (p = page, f = filters) => {
@@ -342,9 +356,11 @@ export default function Leads() {
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Link href="/pipeline" className={btn.secondary}>
-              <KanbanSquare size={14} /> Pipeline
-            </Link>
+            {isAdmin && (
+              <Link href="/pipeline" className={btn.secondary}>
+                <KanbanSquare size={14} /> Pipeline
+              </Link>
+            )}
             {canManageTeam && (
               <button onClick={() => setImportOpen(true)} className={btn.secondary}>
                 <FileUp size={14} /> Import CSV
@@ -358,9 +374,6 @@ export default function Leads() {
                 {remapping ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} className="text-indigo-600" />} Remap
               </button>
             )}
-            <button onClick={() => setNewLeadOpen(true)} className={btn.primary}>
-              <Plus size={14} /> New lead
-            </button>
           </div>
         </div>
 
@@ -377,6 +390,16 @@ export default function Leads() {
               {businesses.map((b) => (
                 <option key={b._id} value={b._id}>
                   {b.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {isAdmin && (
+            <select value={filters.city} onChange={(e) => setF("city", e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700" aria-label="City">
+              <option value="">All cities</option>
+              {cityOptions.map((c) => (
+                <option key={c} value={c}>
+                  {c}
                 </option>
               ))}
             </select>
@@ -417,7 +440,33 @@ export default function Leads() {
             <option value="oldest">Oldest first</option>
             <option value="score">Highest score</option>
             <option value="followup">Next follow-up</option>
+            <option value="product">Product (A–Z)</option>
+            <option value="price_desc">Price (high–low)</option>
           </select>
+          <select
+            value={filters.product}
+            onChange={(e) => setF("product", e.target.value)}
+            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-700"
+            aria-label="Product"
+          >
+            <option value="">All products</option>
+            {(productOptions.length ? productOptions : PRODUCT_TYPES).map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          {isAdmin && (
+            <button
+              onClick={async () => {
+                const qs = toParams(filters);
+                qs.set("groupBy", "product");
+                await downloadFile(`/reports/leads.pdf?${qs}`, `leads-${new Date().toISOString().slice(0,10)}.pdf`);
+              }}
+              title="Download PDF report"
+              className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-600 hover:bg-slate-50"
+            >
+              <Download size={13} /> PDF
+            </button>
+          )}
           {hasActiveFilters && (
             <button onClick={() => setFilters(emptyFilters)} className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-xs text-slate-500 hover:bg-white hover:text-slate-800">
               <X size={13} /> Clear
@@ -785,17 +834,6 @@ export default function Leads() {
         onClose={() => setStatusChange(null)}
         onConfirm={async ({ status, lostReason }) => {
           await runBulk({ action: "status", status, lostReason });
-        }}
-      />
-
-      <NewLeadModal
-        open={newLeadOpen}
-        onClose={() => setNewLeadOpen(false)}
-        projects={projects}
-        salesUsers={salesUsers}
-        onCreated={(lead) => {
-          setBanner({ tone: "ok", text: `Lead "${lead.name}" created.` });
-          void load(1);
         }}
       />
 
