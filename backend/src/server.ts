@@ -6,6 +6,8 @@ import rateLimit from "express-rate-limit";
 
 import { connectDB } from "./config/db";
 import { migrateBusinesses } from "./config/migrateBusinesses";
+import { backfillLeadContacts } from "./services/contacts.service";
+import { ensurePool as warmDemoData } from "./services/demoScrape.service";
 import { env } from "./config/env";
 import { isAllowedOrigin } from "./config/origins";
 import { setupSocket } from "./sockets";
@@ -31,12 +33,14 @@ import adminRoutes, { metaDataCitiesHandler } from "./routes/admin";
 import appConfigRoutes from "./routes/appConfig";
 import spendRoutes from "./routes/spend";
 import reportsRoutes from "./routes/reports";
+import outreachRoutes from "./routes/outreach";
 import { processPushReceipts } from "./services/push.service";
 import { releaseHeldLeads, assignUnassignedLeads } from "./services/leadDelivery.service";
 import { retryFailedWebhookEvents } from "./services/webhookEvents.service";
 import { processLeadSla, processAutoReassign, processDailyDigests } from "./services/automation.service";
 import { whatsappManager } from "./services/whatsapp/sessionManager";
 import { processWhatsAppQueue } from "./services/whatsapp/queue";
+import { processOutreachWhatsApp } from "./services/outreachWhatsApp.service";
 import { processFollowupReminders } from "./services/followupReminder.service";
 import { startKeepAliveService } from "./services/keepAlive.service";
 
@@ -125,6 +129,7 @@ app.use("/api/businesses", businessRoutes);
 app.use("/api/business-projects", businessProjectRoutes);
 app.use("/api/lead-delivery", leadDeliveryRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/outreach", outreachRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/spend", spendRoutes);
@@ -228,6 +233,7 @@ function startJobs() {
   // WhatsApp: restore linked devices, then drain the send queue.
   void whatsappManager.restoreAll();
   timers.push(every("whatsapp-queue", 3_000, () => processWhatsAppQueue(io)));
+  timers.push(every("outreach-whatsapp", 3_000, () => processOutreachWhatsApp(io)));
 }
 
 process.on("unhandledRejection", (reason: any) => {
@@ -238,6 +244,8 @@ process.on("unhandledRejection", (reason: any) => {
 connectDB()
   .then(async () => {
     await migrateBusinesses();
+    void backfillLeadContacts();
+    void warmDemoData();
     server.listen(env.PORT, "0.0.0.0", () => {
       logger.info("API server started", {
         port: env.PORT,

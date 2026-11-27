@@ -13,11 +13,12 @@ import { remapUnmappedLeads } from "../services/leadRemap.service";
 import { Note } from "../models/Note";
 import { SavedView } from "../models/SavedView";
 import { escapeRegex } from "../utils/regex";
+import { leadAudience, notifyLeadAudience, notifyUsers } from "../utils/notify";
 import { getBusinessOwnerProjectIds, salesBelongsToProject } from "../utils/tenant";
 import { refreshLeadScore } from "../utils/scoring";
-import { normalizePhone, phoneTail } from "../utils/phone";
+import { normalizePhone, phoneTail, firstValidPhone } from "../utils/phone";
 import { emitLeadEvent } from "../sockets";
-import { validateBody, objectId, z } from "../middleware/validate";
+import { validateBody, looseText, objectId, z } from "../middleware/validate";
 import { Types } from "mongoose";
 import { visibleLeadFilter, canAccessLead, leadScope } from "../utils/leadAccess";
 
@@ -613,6 +614,17 @@ r.patch("/:id/status", auth, async (req, res) => {
 
   emitLeadEvent(req.app.get("io"), "lead_updated", { lead: lead.toObject(), reason: "STATUS" }, await leadScope(lead._id));
 
+  if (before.status !== lead.status) {
+    await notifyLeadAudience(
+      lead.id,
+      {
+        type: "LEAD_STATUS_CHANGED",
+        title: `Lead ${String(lead.status).replace(/_/g, " ").toLowerCase()}`,
+        message: `${lead.name} · ${String(before.status).replace(/_/g, " ")} → ${String(lead.status).replace(/_/g, " ")} by ${req.user!.name || "a teammate"}`,
+      },
+      { exclude: [req.user!.id] },
+    );
+  }
 
   res.json({ lead });
 });
@@ -779,20 +791,11 @@ r.post("/:id/calls", auth, async (req, res) => {
 
   const populatedLead = await Lead.findById(req.params.id).select("name phone email source campaign status assignedTo").lean();
   const callMessage = `${populatedLead?.name || "Lead"} · Call ${String(req.body.result || "COMPLETED").replace(/_/g, " ").toLowerCase()}${req.body.notes ? ` · ${String(req.body.notes).trim()}` : ""}`;
-  const recipients = await User.find({
-    isActive: true,
-    $or: [{ role: { $in: ["ADMIN", "MANAGER"] } }, { _id: req.user!.id }],
-  }).select("_id").lean();
-  if (recipients.length) {
-    await Notification.insertMany(recipients.map((recipient) => ({
-      user: recipient._id,
-      type: "CALL_LOGGED",
-      title: "Call logged",
-      message: callMessage,
-      entityType: "Lead",
-      entityId: req.params.id,
-    })));
-  }
+  await notifyLeadAudience(
+    String(req.params.id),
+    { type: "CALL_LOGGED", title: "Call logged", message: `${callMessage} · by ${req.user!.name || "a teammate"}` },
+    { exclude: [req.user!.id] },
+  );
 
   const io = req.app.get("io");
   if (io && populatedLead) {
@@ -881,15 +884,7 @@ r.post("/:id/followups", auth, async (req, res) => {
     description: `${new Date(f.scheduledAt).toLocaleString()} · ${assignedUser.name}`,
   });
 
-  const recipients = await User.find({
-    isActive: true,
-    $or: [
-      { role: { $in: ["ADMIN", "MANAGER"] } },
-      { _id: assignedUser._id },
-    ],
-  })
-    .select("_id")
-    .lean();
+  const recipients = await leadAudience(String(req.params.id), { include: [assignedUser._id], exclude: [req.user!.id] });
 
   const populatedFollowup = await FollowUp.findById(f._id)
     .populate("lead", "name email phone status")
@@ -898,16 +893,13 @@ r.post("/:id/followups", auth, async (req, res) => {
 
   const notificationMessage = `${populatedFollowup?.lead && typeof populatedFollowup.lead === "object" ? (populatedFollowup.lead as unknown as { name?: string }).name : leadForFollowup.name || "Lead"} · ${f.type} follow-up scheduled for ${new Date(f.scheduledAt).toLocaleString()} for ${assignedUser.name}.`;
 
-  await Notification.insertMany(
-    recipients.map((user) => ({
-      user: user._id,
-      type: "FOLLOWUP_CREATED",
-      title: "Follow-up scheduled",
-      message: notificationMessage,
-      entityType: "Lead",
-      entityId: req.params.id,
-    })),
-  );
+  await notifyUsers(recipients, {
+    type: "FOLLOWUP_CREATED",
+    title: "Follow-up scheduled",
+    message: notificationMessage,
+    entityType: "Lead",
+    entityId: String(req.params.id),
+  });
 
   const io = req.app.get("io");
 
@@ -1033,11 +1025,11 @@ const importSchema = z.object({
   rows: z
     .array(
       z.object({
-        name: z.string().trim().max(120).optional().default(""),
-        phone: z.string().trim().max(30).optional().default(""),
-        email: z.string().trim().max(160).optional().default(""),
-        campaign: z.string().trim().max(120).optional().default(""),
-        notes: z.string().trim().max(2000).optional().default(""),
+        name: looseText(500),
+        phone: looseText(200),
+        email: looseText(300),
+        campaign: looseText(500),
+        notes: looseText(5000),
       }),
     )
     .min(1)
@@ -1054,23 +1046,28 @@ r.post("/import", auth, roles("ADMIN", "MANAGER", "BUSINESS"), validateBody(impo
 
   for (let i = 0; i < body.rows.length; i++) {
     const row = body.rows[i];
+    // Skip rows without usable contact data instead of failing the whole file.
+    const phone = firstValidPhone(row.phone) || "";
+    const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email) ? row.email.toLowerCase() : "";
+    const skipRow = (message: string) => {
+      result.failed++;
+      if (result.errors.length < 50) result.errors.push({ row: i + 2, message });
+    };
+    if (!phone && !email) {
+      skipRow(row.phone || row.email ? "Invalid phone number or email — row skipped" : "Missing phone and email — row skipped");
+      continue;
+    }
     const parsed = leadInputSchema.safeParse({
-      name: row.name || row.phone || row.email,
-      phone: row.phone,
-      email: row.email && /\S+@\S+\.\S+/.test(row.email) ? row.email : "",
-      campaign: row.campaign,
-      notes: row.notes,
+      name: (row.name || phone || email).slice(0, 120),
+      phone,
+      email,
+      campaign: row.campaign.slice(0, 120),
+      notes: row.notes.slice(0, 2000),
       businessProject: body.businessProject,
       source: "IMPORT",
     });
-    if (!parsed.success || (!row.phone && !row.email)) {
-      result.failed++;
-      if (result.errors.length < 50) {
-        result.errors.push({
-          row: i + 2,
-          message: parsed.success ? "Missing phone and email" : parsed.error.issues[0]?.message || "Invalid row",
-        });
-      }
+    if (!parsed.success) {
+      skipRow(`${parsed.error.issues[0]?.message || "Invalid row"} — row skipped`);
       continue;
     }
     try {

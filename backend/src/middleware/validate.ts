@@ -22,6 +22,17 @@ export function validateBody<T extends ZodType>(schema: T) {
   };
 }
 
+/**
+ * Forgiving text cell for spreadsheet uploads: any value becomes a trimmed string,
+ * cut to `max` characters. Bad cells never fail the whole upload; each row is
+ * checked on its own afterwards and skipped if it has no usable data.
+ */
+export const looseText = (max: number) =>
+  z
+    .any()
+    .optional()
+    .transform((v) => (v === null || v === undefined ? "" : String(v).trim().slice(0, max)));
+
 export const objectId = z.string().regex(/^[a-f0-9]{24}$/i, "Invalid id");
 
 export { z };

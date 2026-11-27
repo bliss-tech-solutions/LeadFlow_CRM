@@ -9,6 +9,8 @@ import { WebhookEvent } from "../models/WebhookEvent";
 import { WhatsAppSession, WhatsAppMessage } from "../models/WhatsApp";
 import { env } from "../config/env";
 import { CITIES } from "../config/cities";
+import { Types } from "mongoose";
+import { OUTREACH_WA_ID } from "../models/Outreach";
 
 const r = Router();
 
@@ -31,7 +33,7 @@ r.get("/health", auth, roles("ADMIN", "MANAGER"), async (_req, res) => {
       Lead.countDocuments({ deliveryStatus: "HELD" }),
       Lead.countDocuments({ deliveryStatus: "RELEASED", assignedTo: { $exists: false }, businessProject: { $ne: null }, status: "NEW" }),
       Lead.countDocuments({ $or: [{ businessProject: { $exists: false } }, { businessProject: null }] }),
-      WhatsAppSession.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+      WhatsAppSession.aggregate([{ $match: { business: { $ne: new Types.ObjectId(OUTREACH_WA_ID) } } }, { $group: { _id: "$status", count: { $sum: 1 } } }]),
       WhatsAppMessage.countDocuments({ sentAt: { $gte: d1 } }),
       WhatsAppMessage.countDocuments({ status: "FAILED", updatedAt: { $gte: d1 } }),
       Lead.aggregate([

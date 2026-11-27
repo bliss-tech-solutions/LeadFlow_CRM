@@ -1,7 +1,6 @@
 import { FollowUp } from "../models/FollowUp";
-import { Notification } from "../models/Notification";
-import { User } from "../models/User";
 import { logActivity } from "../utils/activity";
+import { leadAudience, notifyUsers } from "../utils/notify";
 
 /**
  * Send a follow-up reminder once the appointment's exact 24-hour reminder time
@@ -77,15 +76,39 @@ export async function processFollowupReminders(io: any) {
     if (!due) break;
     const leadId = String(due.lead?._id ?? due.lead);
     const at = new Date(due.scheduledAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
-    await Notification.create({
-      user: due.user,
+    // The people working the lead (owner, assigned salesperson, business owner) — not every admin.
+    const audience = await leadAudience(leadId, { include: [due.user], admins: false });
+    await notifyUsers(audience, {
       type: "FOLLOWUP_DUE_SOON",
       title: `${String(due.type || "Follow-up").replace(/_/g, " ")} at ${at}`,
       message: `${due.lead?.name || "Lead"}${due.lead?.phone ? ` · ${due.lead.phone}` : ""} — starting in 15 minutes.`,
       entityType: "Lead",
       entityId: leadId,
     });
-    if (io) io.to(`user:${String(due.user)}`).emit("followup_reminder", { followUp: due, action: "DUE_SOON" });
+    if (io) for (const id of audience) io.to(`user:${id}`).emit("followup_reminder", { followUp: due, action: "DUE_SOON" });
+    processed += 1;
+  }
+
+  // Third: the moment it's due.
+  for (let i = 0; i < 200; i += 1) {
+    const due: any = await FollowUp.findOneAndUpdate(
+      { status: "PENDING", scheduledAt: { $lte: now, $gt: new Date(now.getTime() - 30 * 60 * 1000) }, reminderDueSentAt: { $exists: false } },
+      { $set: { reminderDueSentAt: now } },
+      { new: true },
+    )
+      .populate("lead", "name phone")
+      .lean();
+    if (!due) break;
+    const leadId = String(due.lead?._id ?? due.lead);
+    const audience = await leadAudience(leadId, { include: [due.user], admins: false });
+    await notifyUsers(audience, {
+      type: "FOLLOWUP_DUE_NOW",
+      title: `${String(due.type || "Follow-up").replace(/_/g, " ")} due now`,
+      message: `${due.lead?.name || "Lead"}${due.lead?.phone ? ` · ${due.lead.phone}` : ""} — it's time for this follow-up.`,
+      entityType: "Lead",
+      entityId: leadId,
+    });
+    if (io) for (const id of audience) io.to(`user:${id}`).emit("followup_reminder", { followUp: due, action: "DUE_NOW" });
     processed += 1;
   }
 
@@ -98,21 +121,15 @@ async function sendReminder(io: any, followup: any) {
   const leadName = followup.lead?.name || "Lead";
   const scheduled = new Date(followup.scheduledAt).toLocaleString();
 
-  const recipients = await User.find({
-    isActive: true,
-    $or: [{ role: { $in: ["ADMIN", "MANAGER"] } }, { _id: ownerId }],
-  }).select("_id").lean();
+  const recipients = await leadAudience(leadId, { include: [ownerId] });
 
-  await Notification.insertMany(
-    recipients.map((user) => ({
-      user: user._id,
-      type: "FOLLOWUP_REMINDER",
-      title: "Follow-up reminder",
-      message: `${leadName} has a ${followup.type} follow-up tomorrow at ${scheduled}.`,
-      entityType: "Lead",
-      entityId: leadId,
-    })),
-  );
+  await notifyUsers(recipients, {
+    type: "FOLLOWUP_REMINDER",
+    title: "Follow-up reminder",
+    message: `${leadName} has a ${followup.type} follow-up tomorrow at ${scheduled}.`,
+    entityType: "Lead",
+    entityId: leadId,
+  });
 
 
   await logActivity({
@@ -125,7 +142,6 @@ async function sendReminder(io: any, followup: any) {
 
   if (io) {
     const payload = { followUp: followup, action: "REMINDER" };
-    io.to("role:ADMIN").emit("followup_reminder", payload);
-    io.to(`user:${ownerId}`).emit("followup_reminder", payload);
+    for (const id of recipients) io.to(`user:${id}`).emit("followup_reminder", payload);
   }
 }

@@ -22,6 +22,7 @@ export interface IFollowUp extends Document {
   reminderAt?: Date;
   reminder24hSentAt?: Date;
   reminder15mSentAt?: Date;
+  reminderDueSentAt?: Date;
   outcomeNote?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -58,6 +59,7 @@ const schema = new Schema<IFollowUp>(
     reminderAt: { type: Date, index: true },
     reminder24hSentAt: Date,
     reminder15mSentAt: Date,
+    reminderDueSentAt: Date,
     outcomeNote: String,
   },
   { timestamps: true },

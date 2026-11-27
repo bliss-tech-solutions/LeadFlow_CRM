@@ -32,9 +32,9 @@ export default function ForgotPassword() {
           <ArrowLeft size={14} /> Back to login
         </Link>
         <div className="mt-6 flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-indigo-600 font-extrabold text-white">LF</div>
+          <div className="grid h-11 w-11 place-items-center rounded-xl bg-indigo-600 font-extrabold text-white">DS</div>
           <div>
-            <b className="block">LeadFlow CRM</b>
+            <b className="block">Data Scraper CRM</b>
             <span className="text-xs text-slate-500">Account recovery</span>
           </div>
         </div>

@@ -83,10 +83,22 @@ export async function registerForPush(): Promise<"granted" | "denied" | "unavail
     body: { token, platform: Platform.OS === "ios" ? "ios" : "android", deviceName: Device.deviceName || Device.modelName || undefined },
   });
   await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
+  pushRegistered = true;
   return "granted";
 }
 
-function openFromNotification(data: any) {
+/** True once this device has a working push token; the socket then stays quiet to avoid double toasts. */
+let pushRegistered = false;
+export const isPushRegistered = () => pushRegistered;
+
+/** In-app destination for a notification (shared by push taps and realtime toasts). */
+export function pathForNotification(n: { entityType?: string; entityId?: string; type?: string }) {
+  if (n.entityType === "Lead" && n.entityId && /^[a-f0-9]{24}$/.test(n.entityId)) return `/leads/${n.entityId}`;
+  if (n.type?.startsWith("FOLLOWUP")) return "/followups";
+  return "/notifications";
+}
+
+export function openFromNotification(data: any) {
   const path = typeof data?.path === "string" && data.path.startsWith("/") ? data.path : "/notifications";
   // Only allow in-app paths we expect (no arbitrary deep links from payloads).
   if (!/^\/(leads(\/[a-f0-9]{24})?|notifications|whatsapp|followups|platform)$/.test(path)) {

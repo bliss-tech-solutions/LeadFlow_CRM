@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { FileUp, Loader2, CheckCircle2 } from "lucide-react";
 import Modal, { btn, field } from "./Modal";
 import { api } from "../lib/api";
+import { readSpreadsheet } from "../lib/csv";
 
 type Props = { open: boolean; onClose: () => void; onDone: () => void; projects: any[] };
 
@@ -15,39 +16,11 @@ const TARGETS = [
   { key: "notes", label: "Notes", guess: ["notes", "note", "remarks", "comment", "requirement"] },
 ] as const;
 
-/** Minimal RFC-4180 CSV parser (quoted fields, escaped quotes, CRLF). */
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"' && text[i + 1] === '"') {
-        cell += '"';
-        i++;
-      } else if (c === '"') inQuotes = false;
-      else cell += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ",") {
-      row.push(cell);
-      cell = "";
-    } else if (c === "\n" || c === "\r") {
-      if (c === "\r" && text[i + 1] === "\n") i++;
-      row.push(cell);
-      if (row.some((x) => x.trim())) rows.push(row);
-      row = [];
-      cell = "";
-    } else cell += c;
-  }
-  row.push(cell);
-  if (row.some((x) => x.trim())) rows.push(row);
-  return rows;
-}
+const IMPORT_BATCH = 250;
 
 export default function ImportLeadsModal({ open, onClose, onDone, projects }: Props) {
   const [fileName, setFileName] = useState("");
+  const [progress, setProgress] = useState("");
   const [rows, setRows] = useState<string[][]>([]);
   const [mapping, setMapping] = useState<Record<string, number>>({});
   const [project, setProject] = useState("");
@@ -71,10 +44,14 @@ export default function ImportLeadsModal({ open, onClose, onDone, projects }: Pr
     reset();
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) return setError("File is larger than 5 MB");
-    const text = await file.text();
-    const parsed = parseCsv(text.replace(/^﻿/, ""));
+    let parsed: string[][];
+    try {
+      parsed = await readSpreadsheet(file);
+    } catch {
+      return setError("Could not read this file. Save it as .csv or .xlsx and try again.");
+    }
     if (parsed.length < 2) return setError("The file has no data rows");
-    if (parsed.length > 1001) return setError("Import up to 1000 rows at a time");
+    if (parsed.length > 5001) return setError("Import up to 5000 rows at a time");
     setFileName(file.name);
     setRows(parsed);
     const auto: Record<string, number> = {};
@@ -101,16 +78,26 @@ export default function ImportLeadsModal({ open, onClose, onDone, projects }: Pr
       const payload = body.map((r) =>
         Object.fromEntries(TARGETS.map((t) => [t.key, mapping[t.key] !== undefined ? (r[mapping[t.key]] || "").trim().slice(0, t.key === "notes" ? 2000 : 160) : ""])),
       );
-      const d = await api("/leads/import", {
-        method: "POST",
-        body: JSON.stringify({ businessProject: project, skipDuplicates, rows: payload }),
-      });
-      setResult(d);
+      // The server takes up to 1000 rows per request, so a 5000-row file goes in batches.
+      const total = { created: 0, duplicates: 0, failed: 0, errors: [] as { row: number; message: string }[] };
+      for (let start = 0; start < payload.length; start += IMPORT_BATCH) {
+        setProgress(`Importing ${Math.min(start + IMPORT_BATCH, payload.length)} of ${payload.length}â€¦`);
+        const d = await api("/leads/import", {
+          method: "POST",
+          body: JSON.stringify({ businessProject: project, skipDuplicates, rows: payload.slice(start, start + IMPORT_BATCH) }),
+        });
+        total.created += d.created || 0;
+        total.duplicates += d.duplicates || 0;
+        total.failed += d.failed || 0;
+        for (const e of d.errors || []) if (total.errors.length < 50) total.errors.push({ ...e, row: e.row + start });
+      }
+      setResult(total);
       onDone();
     } catch (e: any) {
       setError(e?.message || "Import failed");
     } finally {
       setBusy(false);
+      setProgress("");
     }
   }
 
@@ -135,7 +122,7 @@ export default function ImportLeadsModal({ open, onClose, onDone, projects }: Pr
               Cancel
             </button>
             <button className={btn.primary} onClick={submit} disabled={busy || !body.length}>
-              {busy && <Loader2 size={13} className="animate-spin" />} Import {body.length ? `${body.length} rows` : ""}
+              {busy && <Loader2 size={13} className="animate-spin" />} {busy && progress ? progress : `Import ${body.length ? `${body.length} rows` : ""}`}
             </button>
           </>
         )
@@ -144,7 +131,7 @@ export default function ImportLeadsModal({ open, onClose, onDone, projects }: Pr
       {result ? (
         <div className="space-y-3">
           <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">
-            <CheckCircle2 size={18} /> Imported <b>{result.created}</b> leads · {result.duplicates} duplicates skipped · {result.failed} failed
+            <CheckCircle2 size={18} /> Imported <b>{result.created}</b> leads Â· {result.duplicates} duplicates skipped Â· {result.failed} rows skipped (invalid data)
           </div>
           {result.errors?.length > 0 && (
             <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-200 p-3 text-xs text-slate-600">
@@ -163,15 +150,15 @@ export default function ImportLeadsModal({ open, onClose, onDone, projects }: Pr
             <span>
               {fileName ? (
                 <>
-                  <b className="text-slate-800">{fileName}</b> · {body.length} rows
+                  <b className="text-slate-800">{fileName}</b> Â· {body.length} rows
                 </>
               ) : (
                 <>
-                  <b className="text-slate-800">Choose a .csv file</b> — first row must contain column names
+                  <b className="text-slate-800">Choose a .csv or .xlsx file</b> â€” first row must contain column names (up to 5,000 rows)
                 </>
               )}
             </span>
-            <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+            <input type="file" accept=".csv,.xlsx,text/csv" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
           </label>
 
           {headers.length > 0 && (
@@ -210,7 +197,7 @@ export default function ImportLeadsModal({ open, onClose, onDone, projects }: Pr
                       }
                       className="mt-1 w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
                     >
-                      <option value="">—</option>
+                      <option value="">â€”</option>
                       {headers.map((h, i) => (
                         <option key={i} value={i}>
                           {h || `Column ${i + 1}`}
@@ -237,7 +224,7 @@ export default function ImportLeadsModal({ open, onClose, onDone, projects }: Pr
                       <tr key={i} className="border-t border-slate-100">
                         {TARGETS.map((t) => (
                           <td key={t.key} className="max-w-[160px] truncate px-3 py-2 text-slate-700">
-                            {(r as any)[t.key] || <span className="text-slate-300">—</span>}
+                            {(r as any)[t.key] || <span className="text-slate-300">â€”</span>}
                           </td>
                         ))}
                       </tr>

@@ -69,6 +69,7 @@ export default function Topbar({
     socket.on("followup_reminder", onReminder);
     socket.on("call_logged", onCall);
     socket.on("capacity_updated", onCapacity);
+    socket.on("notification_created", onCapacity);
 
     return () => {
       window.removeEventListener("leadflow:sound-enabled", syncSoundState);
@@ -77,6 +78,7 @@ export default function Topbar({
       socket.off("followup_reminder", onReminder);
       socket.off("call_logged", onCall);
       socket.off("capacity_updated", onCapacity);
+      socket.off("notification_created", onCapacity);
     };
   }, []);
 

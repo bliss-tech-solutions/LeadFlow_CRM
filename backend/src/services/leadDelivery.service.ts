@@ -7,6 +7,7 @@ import { BusinessProject } from "../models/BusinessProject";
 import { Notification } from "../models/Notification";
 import { logActivity } from "../utils/activity";
 import { emitLeadEvent } from "../sockets";
+import { notifyLeadAudience } from "../utils/notify";
 import { logger } from "../config/logger";
 
 const CRM_TIMEZONE = "Asia/Kolkata";
@@ -630,6 +631,11 @@ export async function releaseBusinessHeldLeads(businessId: string | Types.Object
         entityId: lead.id,
       })),
     ]);
+    await notifyLeadAudience(
+      lead.id,
+      { type: "LEAD_ASSIGNED", title: "Lead assigned", message: `${lead.name} was assigned to ${assignee.name}.` },
+      { admins: false, exclude: [assignee._id] },
+    );
 
     emitLeadEvent(io, "new_lead", { lead: lead.toObject() }, {
       assignedTo: assignee._id,
@@ -755,6 +761,11 @@ export async function releaseHeldLeads(io: any) {
         entityId: lead.id,
       })),
     ]);
+    await notifyLeadAudience(
+      lead.id,
+      { type: "LEAD_ASSIGNED", title: "Lead assigned", message: `${lead.name} was assigned to ${assignee.name}.` },
+      { admins: false, exclude: [assignee._id] },
+    );
 
     emitLeadEvent(io, "new_lead", { lead: lead.toObject() }, {
       assignedTo: assignee._id,
@@ -828,6 +839,11 @@ export async function assignUnassignedLeads(io: any) {
       entityType: "Lead",
       entityId: lead.id,
     });
+    await notifyLeadAudience(
+      lead.id,
+      { type: "LEAD_ASSIGNED", title: "Lead assigned", message: `${lead.name} was assigned to ${assignee.name}.` },
+      { admins: false, exclude: [assignee._id] },
+    );
     emitLeadEvent(io, "new_lead", { lead: lead.toObject() }, { assignedTo: assignee._id, business: (lead as any).business });
     assigned++;
   }

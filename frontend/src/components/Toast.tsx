@@ -27,65 +27,6 @@ type Popup = {
   tone: "blue" | "green" | "amber" | "violet" | "rose" | "slate";
 };
 
-function followupPopup(payload: any): Popup | null {
-  const followUp = payload?.followUp;
-  if (!followUp) return null;
-
-  const action = String(payload?.action || "UPDATED").toUpperCase();
-  const leadName = followUp?.lead?.name || "Lead";
-  const scheduledAt = followUp?.scheduledAt
-    ? new Date(followUp.scheduledAt).toLocaleString()
-    : "the scheduled time";
-
-  const map: Record<string, Pick<Popup, "title" | "tone" | "message">> = {
-    CREATED: {
-      title: "Follow-up scheduled",
-      message: `${leadName} · ${followUp.type || "CALL"} · ${scheduledAt}`,
-      tone: "blue",
-    },
-    FOLLOWUP_CREATED: {
-      title: "Follow-up scheduled",
-      message: `${leadName} · ${followUp.type || "CALL"} · ${scheduledAt}`,
-      tone: "blue",
-    },
-    FOLLOWUP_COMPLETED: {
-      title: "Follow-up completed",
-      message: `${leadName} · The follow-up was marked completed.`,
-      tone: "green",
-    },
-    FOLLOWUP_CANCELLED: {
-      title: "Follow-up cancelled",
-      message: `${leadName} · ${
-        followUp.cancellationReason ||
-        "The scheduled follow-up was cancelled."
-      }`,
-      tone: "rose",
-    },
-    FOLLOWUP_RESCHEDULED: {
-      title: "Follow-up rescheduled",
-      message: `${leadName} · New time: ${scheduledAt}`,
-      tone: "violet",
-    },
-    REMINDER: {
-      title: "Follow-up reminder",
-      message: `${leadName} · ${followUp.type || "CALL"} tomorrow at ${scheduledAt}`,
-      tone: "amber",
-    },
-  };
-
-  const item = map[action] || {
-    title: "Follow-up updated",
-    message: `${leadName} · ${scheduledAt}`,
-    tone: "slate" as const,
-  };
-
-  return {
-    id: `${followUp._id || followUp.id || "followup"}-${action}-${Date.now()}-${Math.random()}`,
-    kind: "FOLLOWUP",
-    ...item,
-  };
-}
-
 export default function RealtimeToast() {
   const [popups, setPopups] = useState<Popup[]>([]);
   const timers = useRef<Map<string, number>>(new Map());
@@ -176,33 +117,6 @@ export default function RealtimeToast() {
       });
     };
 
-    const onFollowup = (payload: any) => {
-      const popup = followupPopup(payload);
-      if (!popup) return;
-
-      const followUpId = payload?.followUp?._id || payload?.followUp?.id;
-      const action = payload?.action || "UPDATED";
-      const key = `followup:${followUpId}:${action}`;
-
-      if (followUpId && seenEvents.current.has(key)) return;
-      if (followUpId) seenEvents.current.add(key);
-
-      addPopup(popup);
-    };
-
-    const onReminder = (payload: any) => {
-      const popup = followupPopup({ ...payload, action: "REMINDER" });
-      if (!popup) return;
-
-      const followUpId = payload?.followUp?._id || payload?.followUp?.id;
-      const key = `followup:${followUpId}:REMINDER`;
-
-      if (followUpId && seenEvents.current.has(key)) return;
-      if (followUpId) seenEvents.current.add(key);
-
-      addPopup(popup);
-    };
-
     const onSla = (p: any) =>
       addPopup({
         id: `sla-${p?.leadId}-${Date.now()}`,
@@ -219,6 +133,34 @@ export default function RealtimeToast() {
         message: `${p?.name || "A lead"} is still uncontacted. Consider reassigning.`,
         tone: "rose",
       });
+    // Every notification the server stores for this user (follow-up updates and
+    // reminders, assignments, status changes…). Same content as the phone push.
+    // Types with their own richer popup above are skipped to avoid doubles.
+    const SKIP = new Set(["NEW_LEAD", "CALL_LOGGED", "MENTION"]);
+    const onCreated = (n: any) => {
+      if (!n?._id || SKIP.has(n.type)) return;
+      const key = `notification:${n._id}`;
+      if (seenEvents.current.has(key)) return;
+      seenEvents.current.add(key);
+      const type = String(n.type || "");
+      const tone: Popup["tone"] = /CANCEL|LOST|ESCALAT/.test(type)
+        ? "rose"
+        : /COMPLETED|WON/.test(type)
+          ? "green"
+          : /DUE|REMINDER|UNASSIGNED/.test(type)
+            ? "amber"
+            : /RESCHEDULED/.test(type)
+              ? "violet"
+              : "blue";
+      addPopup({
+        id: `${key}-${Date.now()}`,
+        kind: type.startsWith("FOLLOWUP") ? "FOLLOWUP" : type.startsWith("LEAD") ? "LEAD" : "ALERT",
+        title: n.title || "Notification",
+        message: n.message || "",
+        tone,
+      });
+    };
+
     const onNotification = (p: any) => {
       if (p?.type === "MENTION")
         addPopup({ id: `mention-${p?.leadId}-${Date.now()}`, kind: "MENTION", title: "You were mentioned", message: "A teammate mentioned you in a lead note.", tone: "violet" });
@@ -247,8 +189,7 @@ export default function RealtimeToast() {
     socket.on("user_status_changed", onStatusChanged);
     socket.on("new_lead", onNewLead);
     socket.on("call_logged", onCallLogged);
-    socket.on("followup_updated", onFollowup);
-    socket.on("followup_reminder", onReminder);
+    socket.on("notification_created", onCreated);
 
     const onSocketError = (error: Error) => {
       if (
@@ -279,8 +220,7 @@ export default function RealtimeToast() {
       socket.off("user_status_changed", onStatusChanged);
       socket.off("new_lead", onNewLead);
       socket.off("call_logged", onCallLogged);
-      socket.off("followup_updated", onFollowup);
-      socket.off("followup_reminder", onReminder);
+      socket.off("notification_created", onCreated);
       socket.off("connect_error", onSocketError);
 
       window.removeEventListener("leadflow:logout", onLogout);

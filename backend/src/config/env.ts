@@ -29,6 +29,16 @@ const schema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default("LeadFlow CRM <no-reply@leadflow.local>"),
 
+  // SMS (MSG91 Flow API). Templates must be DLT-approved and created in MSG91 first.
+  MSG91_AUTH_KEY: z.string().optional(),
+  MSG91_API_URL: z.string().default("https://control.msg91.com/api/v5/flow"),
+  /** Shared secret in the delivery-report webhook URL: /api/outreach/sms/webhook?token=... */
+  SMS_WEBHOOK_TOKEN: z.string().optional(),
+  /** Google Sheet (link or ID) that fills the "demodata" collection used by the Data scraping demo. */
+  SCRAPE_SHEET_URL: z
+    .string()
+    .default("https://docs.google.com/spreadsheets/d/1V8ZLhe8MkA5CPMT3_wM2st5spV5wo9DPJ-e0Hx-JDhk/edit?gid=0"),
+
   // WhatsApp (QR-linked device via Baileys)
   WA_ENABLED: z
     .string()

@@ -6,6 +6,7 @@ import { refreshSession, tokenStore } from "../api/client";
 import { queryClient } from "../query";
 import { useAuth } from "../auth/store";
 import { toast } from "../ui/toast";
+import { isPushRegistered, openFromNotification, pathForNotification } from "../push/push";
 
 let socket: Socket | null = null;
 
@@ -61,6 +62,14 @@ export function useRealtime() {
     ["new_lead", "followup_reminder", "sla_warning", "notification", "leads_assigned"].forEach((e) =>
       s.on(e, () => queryClient.invalidateQueries({ queryKey: ["notifications"] })),
     );
+
+    // Realtime fallback: when this device has no working push (Expo Go, push not set up,
+    // permission denied), show every new notification as an in-app toast.
+    s.on("notification_created", (n: any) => {
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      if (isPushRegistered()) return;
+      toast.info(n?.title || "LeadFlow", n?.message || "", () => openFromNotification({ path: pathForNotification(n) }));
+    });
 
     s.on("sla_warning", (p: any) => toast.warn("Lead waiting for first contact", `${p?.name || "A lead"} · ${p?.minutes ?? ""} min`));
     s.on("whatsapp_message", (p: any) => {

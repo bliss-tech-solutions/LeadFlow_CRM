@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Pressable, Text, View } from "react-native";
-import Animated, { FadeInUp, FadeOutUp } from "react-native-reanimated";
+import Animated, { LinearTransition, SlideInUp, SlideOutUp } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { create } from "zustand";
@@ -13,7 +13,8 @@ const useToasts = create<{ items: ToastItem[]; push: (t: Omit<ToastItem, "id">) 
   items: [],
   push: (t) => {
     const id = Date.now() + Math.random();
-    set((s) => ({ items: [...s.items, { ...t, id }].slice(-3) }));
+    // Newest on top; keep at most 3 stacked.
+    set((s) => ({ items: [{ ...t, id }, ...s.items].slice(0, 3) }));
     setTimeout(() => set((s) => ({ items: s.items.filter((x) => x.id !== id) })), t.tone === "error" ? 6000 : 4000);
   },
   dismiss: (id) => set((s) => ({ items: s.items.filter((x) => x.id !== id) })),
@@ -56,7 +57,12 @@ export function Toaster() {
       {items.map((t) => {
         const Icon = ICON[t.tone];
         return (
-          <Animated.View key={t.id} entering={FadeInUp.springify().damping(18)} exiting={FadeOutUp}>
+          <Animated.View
+            key={t.id}
+            entering={SlideInUp.duration(220)}
+            exiting={SlideOutUp.duration(180)}
+            layout={LinearTransition.duration(200)}
+          >
             <Pressable
               accessibilityRole="alert"
               onPress={() => {

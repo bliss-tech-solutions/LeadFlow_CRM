@@ -12,6 +12,7 @@ import { renderTemplate, TEMPLATE_VARIABLES, DEFAULT_TEMPLATE_BODY, PRESET_TEMPL
 import { canAccessLead } from "../utils/leadAccess";
 import { normalizePhone } from "../utils/phone";
 import { env } from "../config/env";
+import { OUTREACH_WA_ID } from "../models/Outreach";
 
 const r = Router();
 
@@ -99,7 +100,7 @@ r.post("/disconnect", auth, roles("BUSINESS"), async (req, res) => {
 
 /** Admin overview: connection status of every business (no message content). */
 r.get("/admin/sessions", auth, roles("ADMIN", "MANAGER"), async (_req, res) => {
-  const sessions = await WhatsAppSession.find()
+  const sessions = await WhatsAppSession.find({ business: { $ne: OUTREACH_WA_ID } })
     .select("business status phone lastConnectedAt lastError")
     .populate("business", "name")
     .lean();

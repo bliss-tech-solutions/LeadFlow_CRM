@@ -494,7 +494,7 @@ export default function IntegrationPage() {
                   Click <strong>Add New Connection</strong> and choose <strong>Webhook</strong>.
                 </li>
                 <li className="pl-1">
-                  Name your service (e.g., <em>LeadFlow CRM Ingestion</em>).
+                  Name your service (e.g., <em>Data Scraper CRM Ingestion</em>).
                 </li>
                 <li className="pl-1">
                   Paste the <strong>Webhook URL</strong> from the left into the <strong>URL field</strong>.
@@ -526,7 +526,7 @@ export default function IntegrationPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  This JSON payload maps LeadSync placeholder tags directly to LeadFlow CRM fields and flexible form Q&amp;A.
+                  This JSON payload maps LeadSync placeholder tags directly to Data Scraper CRM fields and flexible form Q&amp;A.
                 </p>
               </div>
 
@@ -591,7 +591,7 @@ export default function IntegrationPage() {
             {/* Field Mappings Reference */}
             <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/70 p-4 space-y-2">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
-                Key Fields Mapped by LeadFlow CRM:
+                Key Fields Mapped by Data Scraper CRM:
               </span>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs">
                 <div className="rounded-lg bg-white p-2.5 border border-slate-200/60">

@@ -51,6 +51,25 @@ function dispatchPush(docs: any[]) {
   if (!docs.length) return;
   // Lazy import avoids a circular dependency (push.service -> User model).
   setImmediate(() => {
+    // Realtime copy for open apps / browsers — same content as the push.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { getIO } = require("../sockets") as typeof import("../sockets");
+      const io = getIO();
+      for (const d of docs) {
+        const n = d.toObject ? d.toObject() : d;
+        io?.to(`user:${String(n.user)}`).emit("notification_created", {
+          _id: String(n._id),
+          type: n.type,
+          title: n.title,
+          message: n.message,
+          entityType: n.entityType,
+          entityId: n.entityId,
+        });
+      }
+    } catch {
+      /* realtime is best-effort */
+    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { pushForNotifications } = require("../services/push.service") as typeof import("../services/push.service");

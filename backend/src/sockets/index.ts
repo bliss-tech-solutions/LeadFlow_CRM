@@ -9,6 +9,13 @@ import { logger } from "../config/logger";
  * - role:ADMIN       ADMIN and MANAGER (platform-wide stream)
  * - business:<id>    BUSINESS owners (their tenant's stream)
  */
+let ioInstance: Server | null = null;
+
+/** The live socket server, for code (like model hooks) that has no request to read it from. */
+export function getIO() {
+  return ioInstance;
+}
+
 export function setupSocket(httpServer: any) {
   const io = new Server(httpServer, {
     cors: {
@@ -43,6 +50,7 @@ export function setupSocket(httpServer: any) {
     );
   });
 
+  ioInstance = io;
   return io;
 }
 

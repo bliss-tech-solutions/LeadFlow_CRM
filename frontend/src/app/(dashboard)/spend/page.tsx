@@ -132,7 +132,7 @@ export default function SpendPage() {
       <div className="flex items-start gap-2 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs text-indigo-900">
         <HelpCircle size={15} className="mt-0.5 shrink-0 text-indigo-500" />
         <div>
-          <strong>How it works:</strong> 1) Pick a business. 2) Add the ₹ amount you spent on ads and the date you added it — for the whole business or one project. 3) LeadFlow counts the leads that arrived for it and shows your <b>cost per lead (CPL)</b>, like Meta Ads Manager.
+          <strong>How it works:</strong> 1) Pick a business. 2) Add the ₹ amount you spent on ads and the date you added it — for the whole business or one project. 3) Data Scraper counts the leads that arrived for it and shows your <b>cost per lead (CPL)</b>, like Meta Ads Manager.
         </div>
       </div>
 

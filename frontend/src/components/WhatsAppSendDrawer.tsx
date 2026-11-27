@@ -247,7 +247,7 @@ export default function WhatsAppSendDrawer({ leadId, onClose, onSent }: Props) {
                   {body}
                 </div>
                 <span className="mt-1 block text-[10px] text-slate-400">
-                  Templates are written and approved by your LeadFlow admin — pick one above.
+                  Templates are written and approved by your Data Scraper admin — pick one above.
                 </span>
               </div>
 

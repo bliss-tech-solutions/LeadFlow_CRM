@@ -4,9 +4,9 @@ import { FollowUp } from "../models/FollowUp";
 import { Lead } from "../models/Lead";
 import { User } from "../models/User";
 import { BusinessProject } from "../models/BusinessProject";
-import { Notification } from "../models/Notification";
 import { auth } from "../middleware/auth";
 import { logActivity } from "../utils/activity";
+import { leadAudience, notifyUsers } from "../utils/notify";
 import { containsRegex } from "../utils/regex";
 
 const r = Router();
@@ -103,34 +103,26 @@ async function notifyFollowup(
 ) {
   const ownerId = String(followup.user?._id ?? followup.user);
   const leadId = String(followup.lead?._id ?? followup.lead);
-  const recipients = await User.find({
-    isActive: true,
-    $or: [{ role: { $in: ["ADMIN", "MANAGER"] } }, { _id: ownerId }],
-  })
-    .select("_id")
-    .lean();
+  const titles: Record<string, string> = {
+    FOLLOWUP_COMPLETED: "Follow-up completed",
+    FOLLOWUP_CANCELLED: "Follow-up cancelled",
+    FOLLOWUP_RESCHEDULED: "Follow-up rescheduled",
+    FOLLOWUP_CREATED: "Follow-up scheduled",
+    FOLLOWUP_REMINDER: "Follow-up reminder",
+  };
+  const actorName = req.user?.name ? ` by ${req.user.name}` : "";
 
-  if (recipients.length) {
-    const titles: Record<string, string> = {
-      FOLLOWUP_COMPLETED: "Follow-up completed",
-      FOLLOWUP_CANCELLED: "Follow-up cancelled",
-      FOLLOWUP_RESCHEDULED: "Follow-up rescheduled",
-      FOLLOWUP_CREATED: "Follow-up scheduled",
-      FOLLOWUP_REMINDER: "Follow-up reminder",
-    };
+  // Owner, assigned salesperson, business owner and admins — everyone but the actor.
+  const audience = await leadAudience(leadId, { include: [ownerId], exclude: [req.user?.id] });
+  await notifyUsers(audience, {
+    type: action,
+    title: titles[action] || "Follow-up updated",
+    message: `${message}${actorName}`,
+    entityType: "Lead",
+    entityId: leadId,
+  });
 
-    await Notification.insertMany(
-      recipients.map((user) => ({
-        user: user._id,
-        type: action,
-        title: titles[action] || "Follow-up updated",
-        message,
-        entityType: "Lead",
-        entityId: leadId,
-      })),
-    );
-  }
-
+  // Data refresh for every open screen of the same people (and the actor's other devices).
   const io = req.app.get("io");
   if (io) {
     const payload = {
@@ -138,8 +130,7 @@ async function notifyFollowup(
       action,
       actorId: req.user!.id,
     };
-    io.to("role:ADMIN").emit("followup_updated", payload);
-    io.to(`user:${ownerId}`).emit("followup_updated", payload);
+    for (const id of new Set([...audience, String(req.user!.id)])) io.to(`user:${id}`).emit("followup_updated", payload);
   }
 }
 

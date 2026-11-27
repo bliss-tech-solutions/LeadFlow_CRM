@@ -20,6 +20,7 @@ import {
   Webhook,
   Activity,
   IndianRupee,
+  Database,
   type LucideIcon,
 } from "lucide-react";
 import { getUser, logout } from "../lib/auth";
@@ -42,6 +43,7 @@ const ICONS: Record<string, LucideIcon | typeof WhatsAppIcon> = {
   webhook: Webhook,
   activity: Activity,
   rupee: IndianRupee,
+  database: Database,
   whatsapp: WhatsAppIcon,
 };
 
@@ -71,9 +73,9 @@ export default function Sidebar() {
       >
         <div className="flex shrink-0 items-center justify-between px-2 pb-5">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-indigo-500 text-sm font-extrabold text-white shadow-sm">LF</div>
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-indigo-500 text-sm font-extrabold text-white shadow-sm">DS</div>
             <div className="min-w-0">
-              <b className="block text-base font-bold leading-tight text-white">LeadFlow</b>
+              <b className="block text-base font-bold leading-tight text-white">Data Scraper</b>
               <span className="text-[10px] tracking-[0.18em] text-slate-400">CRM</span>
             </div>
           </div>

@@ -1,3 +1,4 @@
+import { addContactFromLead } from "../services/contacts.service";
 import { Schema, model, Types, Document } from "mongoose";
 import type { City } from "../config/cities";
 
@@ -173,5 +174,17 @@ schema.index({ phone: 1 });
 schema.index({ business: 1, status: 1, createdAt: -1 });
 schema.index({ assignedTo: 1, status: 1, createdAt: -1 });
 schema.index({ deliveryStatus: 1, assignedTo: 1, createdAt: 1 });
+
+// Every new lead's name + mobile also goes into Contact Data (its own collection).
+schema.pre("save", function () {
+  this.$locals.wasNew = this.isNew;
+});
+schema.post("save", function (doc) {
+  if (!doc.$locals.wasNew) return;
+  void addContactFromLead(doc);
+});
+schema.post("insertMany", function (docs: any[]) {
+  for (const d of docs) void addContactFromLead(d);
+});
 
 export const Lead = model<ILead>("Lead", schema);

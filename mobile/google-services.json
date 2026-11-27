@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "594921914116",
+    "project_id": "leadflow-ec1db",
+    "storage_bucket": "leadflow-ec1db.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:594921914116:android:da61105a7e0aabe862da51",
+        "android_client_info": {
+          "package_name": "com.leadflow.admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAK3fBvWfEXi6Hkjyi5ivyzSOeoilFkzcA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:594921914116:android:d4f2fb827db93c4c62da51",
+        "android_client_info": {
+          "package_name": "com.leadflow.partner"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAK3fBvWfEXi6Hkjyi5ivyzSOeoilFkzcA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

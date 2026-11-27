@@ -46,3 +46,7 @@ dist-admin/
 dist-partner/
 dist-admin-ios/
 dist-partner-ios/
+
+# Firebase service-account key (secret) - upload to EAS, never commit
+*firebase-adminsdk*.json
+fcm-service-account*.json

@@ -7,6 +7,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
+import * as Updates from "expo-updates";
 import * as LocalAuthentication from "expo-local-authentication";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Fingerprint, Download, Wrench } from "lucide-react-native";
@@ -27,9 +28,28 @@ LogBox.ignoreLogs(["ImageBackground is deprecated", "expo-notifications", "`expo
 
 const THEME_KEY = "leadflow.theme";
 
+/**
+ * Over-the-air updates: whenever the app comes to the foreground, download any newer
+ * JS published with `eas update`. It's applied the next time the app starts.
+ */
+function useOtaUpdates() {
+  useEffect(() => {
+    if (__DEV__ || !Updates.isEnabled) return;
+    const check = () =>
+      Updates.checkForUpdateAsync()
+        .then((r) => (r.isAvailable ? Updates.fetchUpdateAsync() : null))
+        .catch(() => undefined);
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") void check();
+    });
+    return () => sub.remove();
+  }, []);
+}
+
 function Effects() {
   useRealtime();
   usePushNotifications();
+  useOtaUpdates();
   return null;
 }
 

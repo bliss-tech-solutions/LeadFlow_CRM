@@ -4,7 +4,9 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: [
     "localhost:3000",
-    "localhost:4000"
+    "localhost:4000",
+    "met-subscriber-initial-skin.trycloudflare.com",
+    "*.trycloudflare.com",
   ],
   experimental: {
     cpus: 1,

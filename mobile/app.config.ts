@@ -1,5 +1,13 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
+// app.config runs in Node at build time; the app's tsconfig has no Node types.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { existsSync } = require("fs") as { existsSync: (path: string) => boolean };
+
+// Firebase config for Android push (FCM). Optional: builds still work without it, push just won't register.
+const GOOGLE_SERVICES = "./google-services.json";
+const hasGoogleServices = existsSync(GOOGLE_SERVICES);
+
 /**
  * One codebase, two store apps.
  *   APP_VARIANT=partner  → "LeadFlow Partner" (Business owners & Sales staff)
@@ -17,7 +25,7 @@ const VARIANTS: Record<Variant, { name: string; slug: string; scheme: string; bu
     slug: "leadflow-partner",
     scheme: "leadflow",
     bundleId: "com.leadflow.partner",
-    projectId: process.env.EAS_PROJECT_ID_PARTNER,
+    projectId: process.env.EAS_PROJECT_ID_PARTNER || "cb37b00f-b997-4981-823f-7470c66a83b6",
     color: "#4F46E5",
   },
   admin: {
@@ -25,7 +33,7 @@ const VARIANTS: Record<Variant, { name: string; slug: string; scheme: string; bu
     slug: "leadflow-admin",
     scheme: "leadflow-admin",
     bundleId: "com.leadflow.admin",
-    projectId: process.env.EAS_PROJECT_ID_ADMIN,
+    projectId: process.env.EAS_PROJECT_ID_ADMIN || "9afea4df-3a4e-4437-b1fc-2df14d92ce05",
     color: "#0F172A",
   },
 };
@@ -54,6 +62,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     entitlements: { "com.apple.developer.usernotifications.time-sensitive": true },
   },
   android: {
+    ...(hasGoogleServices ? { googleServicesFile: GOOGLE_SERVICES } : {}),
     package: v.bundleId,
     adaptiveIcon: {
       backgroundColor: "#EEF2FF",
@@ -90,6 +99,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     apiUrl: process.env.EXPO_PUBLIC_API_URL || "http://10.0.2.2:4000/api",
     eas: v.projectId ? { projectId: v.projectId } : undefined,
   },
-  updates: v.projectId ? { url: `https://u.expo.dev/${v.projectId}` } : undefined,
+  // OTA updates: on launch the app downloads the latest JS for its channel in the
+  // background and applies it on the next start (no reinstall needed).
+  updates: v.projectId
+    ? { url: `https://u.expo.dev/${v.projectId}`, checkAutomatically: "ON_LOAD", fallbackToCacheTimeout: 0 }
+    : undefined,
+  // Updates only reach builds with the same app version. Bump "version" when native code changes.
   runtimeVersion: { policy: "appVersion" },
 });

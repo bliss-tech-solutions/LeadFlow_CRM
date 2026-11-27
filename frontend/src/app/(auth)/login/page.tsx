@@ -9,10 +9,10 @@ export default function LoginChooser() {
       <section className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8">
         <div className="flex items-center gap-3">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-indigo-600 font-extrabold text-white">
-            LF
+            DS
           </div>
           <div>
-            <b className="block text-slate-900">LeadFlow CRM</b>
+            <b className="block text-slate-900">Data Scraper CRM</b>
             <span className="text-xs text-slate-500">
               Choose your workspace
             </span>

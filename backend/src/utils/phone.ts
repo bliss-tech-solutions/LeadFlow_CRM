@@ -29,3 +29,37 @@ export function phoneTail(raw: unknown): string | null {
   const digits = String(raw ?? "").replace(/[^\d]/g, "");
   return digits.length >= 8 ? digits.slice(-10) : null;
 }
+
+/**
+ * First valid number in a messy spreadsheet cell, e.g. "98765 43210 / 91234 56789"
+ * or "Mobile: +91-98765-43210". Returns null when no part is a usable number.
+ */
+export function firstValidPhone(raw: unknown, defaultCountryCode = "91"): string | null {
+  const text = String(raw ?? "").slice(0, 200);
+  if (!text.trim()) return null;
+  const whole = normalizePhone(text, defaultCountryCode);
+  if (whole) return whole;
+  for (const part of text.split(/[,;/|\n]+|\s{2,}|\bor\b/i)) {
+    const p = normalizePhone(part, defaultCountryCode);
+    if (p) return p;
+  }
+  return null;
+}
+
+/**
+ * Format a normalized phone number for display & export (e.g. "919876543210" -> "+91 9876543210").
+ * Handles 10-digit local numbers (+91 default) and 11-15 digit international numbers.
+ */
+export function formatPhoneDisplay(raw: unknown, defaultCountryCode = "91"): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const digits = s.replace(/[^\d]/g, "");
+  if (!digits) return s;
+
+  if (digits.length === 10) return `+${defaultCountryCode} ${digits}`;
+  if (digits.length === 11 && digits.startsWith("0")) return `+${defaultCountryCode} ${digits.slice(1)}`;
+  if (digits.length === 12 && digits.startsWith("91")) return `+91 ${digits.slice(2)}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+1 ${digits.slice(1)}`;
+  if (digits.length > 10) return `+${digits.slice(0, digits.length - 10)} ${digits.slice(-10)}`;
+  return `+${digits}`;
+}

@@ -4,6 +4,7 @@ import { Types } from "mongoose";
 import { WhatsAppSession, WhatsAppMessage, WhatsAppSessionStatus } from "../../models/WhatsApp";
 import { User } from "../../models/User";
 import { Notification } from "../../models/Notification";
+import { OutreachMessage, OUTREACH_WA_ID } from "../../models/Outreach";
 import { useMongoAuthState } from "./authState";
 import { logger } from "../../config/logger";
 import { env } from "../../config/env";
@@ -226,6 +227,17 @@ class WhatsAppSessionManager {
           set.deliveredAt = new Date();
         } else continue;
 
+        // LeadFlow's own outreach number: receipts update the Contact Data message log.
+        if (businessId === OUTREACH_WA_ID) {
+          const next = set.status as string;
+          const res = await OutreachMessage.updateOne(
+            { channel: "WHATSAPP", waMessageIds: id, status: { $in: next === "READ" ? ["SENDING", "SENT", "DELIVERED"] : ["SENDING", "SENT"] } },
+            { $set: { status: next, ...(next === "DELIVERED" ? { deliveredAt: new Date() } : {}) } },
+          );
+          if (res.modifiedCount) this.io?.to("role:ADMIN").emit("outreach_updated", {});
+          continue;
+        }
+
         const order = status >= 4 ? ["QUEUED", "SENDING", "SENT", "DELIVERED"] : ["QUEUED", "SENDING", "SENT"];
         const msg = await WhatsAppMessage.findOneAndUpdate(
           { business: businessId, waMessageIds: id, status: { $in: order } },
@@ -241,7 +253,14 @@ class WhatsAppSessionManager {
 
   private async notifyOwners(businessId: string, title: string, message: string) {
     try {
-      const owners = await User.find({ role: "BUSINESS", business: businessId, isActive: true }).select("_id").lean();
+      // The outreach number belongs to the platform, so admins are told instead of a business.
+      const isOutreach = businessId === OUTREACH_WA_ID;
+      const owners = await User.find(isOutreach ? { role: { $in: ["ADMIN", "MANAGER"] }, isActive: true } : { role: "BUSINESS", business: businessId, isActive: true })
+        .select("_id")
+        .lean();
+      if (isOutreach) {
+        message = "LeadFlow's messaging WhatsApp needs attention. Open Contact Data → SMS & WhatsApp setup → WhatsApp and reconnect.";
+      }
       if (owners.length) {
         await Notification.insertMany(
           owners.map((o) => ({ user: o._id, type: "WHATSAPP_STATUS", title, message, entityType: "Business", entityId: businessId })),

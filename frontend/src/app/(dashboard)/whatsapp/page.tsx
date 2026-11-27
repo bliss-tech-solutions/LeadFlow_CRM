@@ -316,7 +316,7 @@ export default function WhatsAppPage() {
             <li>• Prefer a dedicated <b>WhatsApp Business</b> number for your team.</li>
             <li>• Only message people who enquired about your project. Respect opt-outs (mark the lead "opted out").</li>
             <li>
-              • LeadFlow sends one message at a time with natural pauses and stops at <b>{st?.dailyLimit ?? 150}</b> messages a day.
+              • Data Scraper sends one message at a time with natural pauses and stops at <b>{st?.dailyLimit ?? 150}</b> messages a day.
             </li>
             <li>• Personalise templates — identical bulk text is the most common reason for bans.</li>
           </ul>
@@ -328,7 +328,7 @@ export default function WhatsAppPage() {
         <div>
           <h2 className="font-semibold text-slate-900">Message templates</h2>
           <p className="text-xs text-slate-500">
-            Templates are prepared and approved by your LeadFlow admin team. Your team picks one when sending — lead and project details are filled in automatically.
+            Templates are prepared and approved by your Data Scraper admin team. Your team picks one when sending — lead and project details are filled in automatically.
           </p>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -346,7 +346,7 @@ export default function WhatsAppPage() {
             </div>
           ))}
         </div>
-        <p className="mt-3 text-[11px] text-slate-400">Need a new template or a wording change? Ask your LeadFlow admin.</p>
+        <p className="mt-3 text-[11px] text-slate-400">Need a new template or a wording change? Ask your Data Scraper admin.</p>
       </section>
 
       <div className="grid gap-5 xl:grid-cols-2">
@@ -356,7 +356,7 @@ export default function WhatsAppPage() {
             <Settings2 size={17} className="text-indigo-600" />
             <h2 className="font-semibold text-slate-900">Team & automation</h2>
           </div>
-          <p className="mt-1 text-xs text-slate-500">Configured by your LeadFlow admin. Contact them to change these.</p>
+          <p className="mt-1 text-xs text-slate-500">Configured by your Data Scraper admin. Contact them to change these.</p>
           {!settings ? (
             <p className="mt-4 text-xs text-slate-500">Loading settings…</p>
           ) : (
