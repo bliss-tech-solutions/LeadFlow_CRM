@@ -13,6 +13,8 @@ import { formatContactPhone, type Channel, type ContactRow, type OutreachConfig,
 import { api, downloadFile } from "../../../lib/api";
 import { getUser } from "../../../lib/auth";
 import { socket } from "../../../lib/socket";
+import { validateDomain } from "../../../lib/domain";
+import { SCRAPE_COUNT_MULTIPLIER, formatCount } from "../../../lib/demoDashboard";
 
 type Data = { contacts: ContactRow[]; total: number; page: number; pages: number; perPage: number };
 
@@ -59,6 +61,7 @@ export default function ContactsPage() {
   // Data scraping (demo): keeps loading and pulls a few contacts at a time from the
   // demodata collection into Contact Data until you click anywhere outside it.
   const [site, setSite] = useState("");
+  const [siteError, setSiteError] = useState("");
   const [scraping, setScraping] = useState("");
   const [scrapeCount, setScrapeCount] = useState(0);
   const [scrapeNote, setScrapeNote] = useState("");
@@ -139,8 +142,8 @@ export default function ContactsPage() {
     const stop = (e: MouseEvent) => {
       if (scraperRef.current?.contains(e.target as Node)) return;
       scrapeRun.current++;
-      const n = scrapeFound.current;
-      setScrapeNote(`Stopped. ${n} new contact${n === 1 ? "" : "s"} found on ${scraping}.`);
+      const n = scrapeFound.current * SCRAPE_COUNT_MULTIPLIER;
+      setScrapeNote(`Stopped. ${formatCount(n)} new contact${n === 1 ? "" : "s"} found on ${scraping}.`);
       setScraping("");
     };
     document.addEventListener("mousedown", stop);
@@ -152,8 +155,16 @@ export default function ContactsPage() {
 
   function startScrape(e: React.FormEvent) {
     e.preventDefault();
-    const target = site.trim();
-    if (!target || scraping) return;
+    if (scraping) return;
+    // Only a bare domain with a real extension (yourbusiness.com, abc.co.in …), no http(s):// or paths.
+    const check = validateDomain(site);
+    if (!check.ok) {
+      setSiteError(check.error);
+      return;
+    }
+    const target = check.domain;
+    setSite(target);
+    setSiteError("");
     const run = ++scrapeRun.current;
     scrapeFound.current = 0;
     setScrapeCount(0);
@@ -262,9 +273,19 @@ export default function ContactsPage() {
               data-lpignore="true"
               data-form-type="other"
               value={site}
-              onChange={(e) => setSite(isAutofilled(e.target) ? "" : e.target.value)}
-              placeholder="Enter a website, e.g. google.com"
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-indigo-400 focus:bg-white"
+              onChange={(e) => {
+                const v = isAutofilled(e.target) ? "" : e.target.value;
+                setSite(v);
+                // After a failed attempt, re-check as the user fixes it.
+                if (siteError) {
+                  const check = validateDomain(v);
+                  setSiteError(check.ok || !v.trim() ? "" : check.error);
+                }
+              }}
+              placeholder="Enter a domain, e.g. yourbusiness.com"
+              aria-invalid={siteError ? true : undefined}
+              aria-describedby={siteError ? "scrape-error" : undefined}
+              className={`w-full rounded-xl border bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:bg-white ${siteError ? "border-rose-400 focus:border-rose-500" : "border-slate-200 focus:border-indigo-400"}`}
             />
           </div>
           <button
@@ -276,13 +297,18 @@ export default function ContactsPage() {
             {scraping ? "Scraping…" : "Scrape"}
           </button>
         </div>
+        {siteError && !scraping && (
+          <p id="scrape-error" role="alert" className="mt-2 text-xs font-medium text-rose-600">
+            {siteError}
+          </p>
+        )}
         {scraping ? (
           <div className="mt-3 flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm text-indigo-700">
             <Loader2 size={18} className="shrink-0 animate-spin" />
             <span className="min-w-0 truncate">
               Scraping contacts from <b>{scraping}</b>…
             </span>
-            <span className="ml-auto shrink-0 rounded-lg bg-white px-2 py-0.5 text-xs font-semibold tabular-nums text-indigo-600">{scrapeCount} found</span>
+            <span className="ml-auto shrink-0 rounded-lg bg-white px-2 py-0.5 text-xs font-semibold tabular-nums text-indigo-600">{formatCount(scrapeCount * SCRAPE_COUNT_MULTIPLIER)} found</span>
           </div>
         ) : (
           scrapeNote && (

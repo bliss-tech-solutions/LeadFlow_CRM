@@ -9,6 +9,9 @@
 
 export const DEMO_DASHBOARD = process.env.NEXT_PUBLIC_DEMO_DASHBOARD !== "false";
 
+/** Data scraping (demo): each contact actually found is shown as this many (1 → 100). */
+export const SCRAPE_COUNT_MULTIPLIER = DEMO_DASHBOARD ? 100 : 1;
+
 /** 1048576 -> "10,48,576" (Indian grouping). */
 export const formatCount = (n: number | string | null | undefined) =>
   Number(n || 0).toLocaleString("en-IN");
