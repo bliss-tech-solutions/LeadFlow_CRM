@@ -12,15 +12,15 @@ export type NavEntry = { href: string; label: string; icon: string; section?: st
 const NAV: Record<Role, NavEntry[]> = {
   ADMIN: [
     { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-    { href: "/leads", label: "Leads", icon: "users" },
-    { href: "/pipeline", label: "Pipeline", icon: "kanban" },
-    { href: "/followups", label: "Follow-ups", icon: "clock" },
-    { href: "/calendar", label: "Calendar", icon: "calendar" },
-    { href: "/analytics", label: "Analytics", icon: "chart" },
-    { href: "/spend", label: "Ad Spend", icon: "rupee", section: "Insights" },
+    // { href: "/leads", label: "Leads", icon: "users" },
+    // { href: "/pipeline", label: "Pipeline", icon: "kanban" },
+    // { href: "/followups", label: "Follow-ups", icon: "clock" },
+    // { href: "/calendar", label: "Calendar", icon: "calendar" },
+    // { href: "/analytics", label: "Analytics", icon: "chart" },
+    // { href: "/spend", label: "Ad Spend", icon: "rupee", section: "Insights" },
     { href: "/contacts", label: "Contact Data", icon: "database", section: "Insights" },
     { href: "/business", label: "Businesses", icon: "building", section: "Manage" },
-    { href: "/team", label: "Sales Team", icon: "team", section: "Manage" },
+    // { href: "/team", label: "Sales Team", icon: "team", section: "Manage" },
     { href: "/integration", label: "Meta Setup", icon: "shield", section: "Platform" },
     { href: "/webhooks", label: "Webhook Log", icon: "webhook", section: "Platform" },
     { href: "/platform", label: "Platform Health", icon: "activity", section: "Platform" },
@@ -67,7 +67,8 @@ const NAV: Record<Role, NavEntry[]> = {
 
 /** Extra route prefixes reachable from inside pages (detail screens). */
 const EXTRA: Record<Role, string[]> = {
-  ADMIN: ["/leads/", "/business/", "/business-accounts", "/spend"],
+  // Hidden from the admin sidebar but still reachable from links and dashboard cards.
+  ADMIN: ["/leads", "/pipeline", "/followups", "/calendar", "/analytics", "/team", "/business/", "/business-accounts", "/spend"],
   MANAGER: ["/leads/", "/business/", "/business-accounts", "/spend"],
   BUSINESS: ["/leads/", "/business/"],
   SALES: ["/leads/"],
