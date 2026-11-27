@@ -1,6 +1,6 @@
-import PortalLogin from "../../../../components/PortalLogin";
+import { redirect } from "next/navigation";
 
+// Business-partner login is turned off — only the admin login is available.
 export default function BusinessLogin() {
-  return <PortalLogin portal="BUSINESS" />;
+  redirect("/admin/login");
 }
-

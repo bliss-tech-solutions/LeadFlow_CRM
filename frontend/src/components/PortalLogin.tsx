@@ -142,12 +142,6 @@ export default function PortalLogin({ portal }: { portal: Portal }) {
           {!loading && <ArrowRight size={15} />}
         </button>
 
-        <div className="mt-5 text-center text-xs text-slate-500">
-          Looking for a different workspace?{" "}
-          <Link className="font-semibold text-indigo-600" href="/login">
-            Switch workspace
-          </Link>
-        </div>
       </form>
     </main>
   );

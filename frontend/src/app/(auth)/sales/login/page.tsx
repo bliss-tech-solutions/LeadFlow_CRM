@@ -1,5 +1,6 @@
-import PortalLogin from "../../../../components/PortalLogin";
+import { redirect } from "next/navigation";
 
+// Sales login is turned off — only the admin login is available.
 export default function SalesLogin() {
-  return <PortalLogin portal="SALES" />;
+  redirect("/admin/login");
 }

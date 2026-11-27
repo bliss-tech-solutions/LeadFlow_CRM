@@ -28,6 +28,7 @@ import {
   Tooltip,
 } from "recharts";
 import FollowupCalendar from "../../../components/FollowupCalendar";
+import { DEMO_DASHBOARD, demoKpis, demoPerformance, formatAxis, formatCount } from "../../../lib/demoDashboard";
 
 const statuses = [
   "NEW",
@@ -164,6 +165,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!isAdmin) return;
+    if (DEMO_DASHBOARD) {
+      setPerfData(demoPerformance(perfRange, [selectedCity, perfBusiness, perfProject].filter(Boolean).join("|")));
+      return;
+    }
     const qs = new URLSearchParams({ range: perfRange });
     if (selectedCity) qs.set("city", selectedCity);
     if (perfBusiness) qs.set("business", perfBusiness);
@@ -233,6 +238,14 @@ export default function Dashboard() {
   }
 
   const total = stats.total || 0;
+  // Demo figures (see lib/demoDashboard.ts) for the lead KPI cards, or the real workspace counts.
+  const demo = isAdmin && DEMO_DASHBOARD ? demoKpis() : null;
+  const kpi = {
+    leadsThisMonth: demo ? demo.leadsThisMonth : overview?.summary?.leadsThisMonth ?? 0,
+    leadsToday: demo ? demo.leadsToday : overview?.summary?.leadsToday ?? 0,
+    released: demo ? demo.releasedLeads : total,
+    newLeads: demo ? demo.newLeads : stats.newCount || 0,
+  };
   const funnel = [
     ["New", stats.newCount || 0],
     ["Interested", stats.interested || 0],
@@ -266,20 +279,20 @@ export default function Dashboard() {
       />
 
       {/* Admin client KPIs */}
-      {isAdmin && overview?.summary && (
+      {isAdmin && (overview?.summary || demo) && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 w-full">
           {[
-            ["Total clients", overview.summary.totalClients ?? 0, Building2, "indigo"],
-            ["Active clients", overview.summary.activeClients ?? 0, CheckCircle2, "green"],
-            ["Leads this month", overview.summary.leadsThisMonth ?? 0, ArrowUpRight, "sky"],
-            ["Leads today", overview.summary.leadsToday ?? 0, Radio, "amber"],
+            ["Total clients", overview?.summary?.totalClients ?? 0, Building2, "indigo"],
+            ["Active clients", overview?.summary?.activeClients ?? 0, CheckCircle2, "green"],
+            ["Leads this month", kpi.leadsThisMonth, ArrowUpRight, "sky"],
+            ["Leads today", kpi.leadsToday, Radio, "amber"],
           ].map(([label, value, Icon, tone]: any) => (
             <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className={`flex items-center justify-between text-xs ${tone === "indigo" ? "text-indigo-600" : tone === "green" ? "text-green-600" : tone === "sky" ? "text-sky-600" : "text-amber-600"}`}>
                 <span className="font-medium">{label}</span>
                 <Icon size={17} />
               </div>
-              <strong className="mt-2 block text-3xl font-bold text-slate-900">{value}</strong>
+              <strong className="mt-2 block truncate text-2xl sm:text-3xl font-bold text-slate-900">{formatCount(value)}</strong>
             </div>
           ))}
         </div>
@@ -287,8 +300,8 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 lg:gap-5 w-full">
         {[
-          [isAdmin ? "Released leads" : "My leads", total, Users],
-          ["New leads", stats.newCount || 0, Clock3],
+          [isAdmin ? "Released leads" : "My leads", kpi.released, Users],
+          ["New leads", kpi.newLeads, Clock3],
           ["Interested", stats.interested || 0, CheckCircle2],
           ["Won", stats.won || 0, ArrowUpRight],
           ...(isAdmin ? [["Held", heldCount, PauseCircle]] : []),
@@ -301,8 +314,8 @@ export default function Dashboard() {
               <span>{label}</span>
               <Icon size={17} />
             </div>
-            <strong className="mt-2 block text-3xl font-bold text-slate-900">
-              {value}
+            <strong className="mt-2 block truncate text-2xl sm:text-3xl font-bold text-slate-900">
+              {formatCount(value)}
             </strong>
             <span className="mt-1 block text-[11px] text-slate-400">
               {isAdmin ? "Current workspace count" : "Assigned to you"}
@@ -415,7 +428,7 @@ export default function Dashboard() {
           </div>
           {perfData?.data?.length ? (
             <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={perfData.data} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
+              <AreaChart data={perfData.data} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gLeads" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#2a78d6" stopOpacity={0.25} />
@@ -428,8 +441,9 @@ export default function Dashboard() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="period" tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} allowDecimals={false} />
+                <YAxis tick={{ fontSize: 10, fill: "#64748b" }} tickLine={false} axisLine={false} allowDecimals={false} tickFormatter={formatAxis} width={52} />
                 <Tooltip
+                  formatter={(v: any) => formatCount(v)}
                   contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12, boxShadow: "0 8px 24px rgba(15,23,42,.08)" }}
                   labelStyle={{ color: "#0f172a", fontWeight: 600 }}
                 />
